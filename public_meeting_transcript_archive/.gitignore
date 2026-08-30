@@ -218,3 +218,5 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+docker-compose.yml
+Dockerfile
