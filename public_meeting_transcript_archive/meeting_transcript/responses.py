@@ -1,5 +1,5 @@
 from flask import jsonify
-from meeting_transcript.governing_body.models import governingBody
+from meeting_transcript.governing_body.models import governingBody,ListGoverningBodyDTO
 
 class ApiError(Exception):
     """
@@ -15,6 +15,9 @@ class ApiError(Exception):
 
 
 def list_envelope_gov(tickets: list[governingBody]):
+     
+     return jsonify(count=len(tickets),items=[t.model_dump(mode="json") for t in tickets])
+def list_envelope_gov_with_count(tickets: list[ListGoverningBodyDTO]):
      
      return jsonify(count=len(tickets),items=[t.model_dump(mode="json") for t in tickets])
 

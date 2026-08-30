@@ -32,12 +32,12 @@ def create_app():
         detail_str = f"{first_error['loc']}: {first_error['msg']}"
         #UNPROCESSABLE_ENTITY -more specific than 400
         return error_response("validation_failed",422,detail_str)
-    @app.errorhandler(Exception)
-    def handle_Unhandled_Exception(error: Exception):
-        return error_response("internal",500,"an unexpected error ocurred")
-        #can handle status codes as well
-    @app.errorhandler(404)
-    def handle_resource_not_found(error):
-        return error_response("not_found",404,"No route for given path!")
+    # @app.errorhandler(Exception)
+    # def handle_Unhandled_Exception(error: Exception):
+    #     return error_response("internal",500,"an unexpected error ocurred")
+    #     #can handle status codes as well
+    # @app.errorhandler(404)
+    # def handle_resource_not_found(error):
+    #     return error_response("not_found",404,"No route for given path!")
             
     return app

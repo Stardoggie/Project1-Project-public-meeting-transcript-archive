@@ -21,3 +21,17 @@ class CreateGoverningBodyDTO(BaseModel):
     body: Body
     description: str =Field(min_length= 5)
 
+class UpdateGoverningBodyDTO(BaseModel):
+    #error at extra things not detailed below
+    model_config = ConfigDict(extra="forbid")
+    name: str =Field(max_length=60)
+    body: Body
+    description: str =Field(min_length= 5)
+
+class ListGoverningBodyDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str =Field(max_length=60)
+    body: Body
+    description: str =Field(min_length= 5)
+    meeting_count: int | None
