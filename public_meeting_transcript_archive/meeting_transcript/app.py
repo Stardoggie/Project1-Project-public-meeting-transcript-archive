@@ -9,6 +9,7 @@ from meeting_transcript.health.routes import liveliness_bp
 from meeting_transcript.governing_body.models_db import GoverningBody
 from meeting_transcript.meetings.models_db import Meeting,Entities,KeyPhrases
 from meeting_transcript.governing_body.routes import govbody_bp
+from meeting_transcript.meetings.routes import meetings_bp
 
 API_PREFIX = "/api/v1/"
 migrate = Migrate()
@@ -20,6 +21,7 @@ def create_app():
     app = Flask(__name__)
     app.register_blueprint(liveliness_bp,url_prefix="")
     app.register_blueprint(govbody_bp,url_prefix="/governing-bodies")
+    app.register_blueprint(meetings_bp,url_prefix="/governing-bodies")
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"] 
     db.init_app(app)#initilizing db with flask
     migrate.init_app(app,db)#helps manage connection to db

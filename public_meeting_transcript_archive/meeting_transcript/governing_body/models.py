@@ -6,7 +6,7 @@ Body = Literal["council","commission","board"]
 
 
 class governingBody(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True,extra="forbid")
     id: int
     name: str =Field(max_length=60)
     body: Body

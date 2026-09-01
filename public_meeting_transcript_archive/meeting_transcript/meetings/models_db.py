@@ -1,7 +1,7 @@
-from sqlalchemy import ForeignKey,String,Text
+from sqlalchemy import ForeignKey,String,Text,Boolean,Date
 from sqlalchemy.orm import Mapped,mapped_column,relationship
 from meeting_transcript.extensions import db
-from datetime import datetime,timezone
+from datetime import datetime,timezone,date
 
 
 class Meeting(db.Model):
@@ -10,11 +10,12 @@ class Meeting(db.Model):
     """
     __tablename__ = "meetings"
     id:Mapped[int] = mapped_column(primary_key=True,autoincrement=True)
-    meeting_date:Mapped[datetime] =mapped_column(nullable=False)
+    meeting_date:Mapped[date] =mapped_column(Date,nullable=False)
+    title: Mapped[str] = mapped_column(Text,nullable=False)
     status:Mapped[str] = mapped_column(String(20),nullable=False,default="scheduled")
     audio_object_key:Mapped[str] = mapped_column(Text,nullable=True) #these are nullable due to having meetings that havent taken place yet, therefore dont have audio
     transcribe_job_name:Mapped[str] = mapped_column(Text,nullable=True)#     or transcriptions
-    transcript:Mapped[str]= mapped_column(Text,nullable=False)# same as above
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     #foreign key stuff and cascading deletion when this is deleted
     body_id:Mapped[int] = mapped_column(ForeignKey("governing_body.id"),nullable=False)
     body: Mapped["GoverningBody"] = relationship(
@@ -30,6 +31,9 @@ class Meeting(db.Model):
         back_populates="meeting",
         cascade="all, delete-orphan"
     )
+    @property
+    def transcript_available(self) -> bool:
+        return self.transcript is not None
 
 
 class Entities(db.Model):
