@@ -2,7 +2,8 @@
 ## Install
 ### In the project folder after creating .venv: <br> 
 pip install -e .       
-
+### Install test software
+pip install -e ".[dev]"
 ## Run
 docker compose up --build
 
