@@ -14,6 +14,13 @@ def get_bodies(): #return later to add meeting count after meeting stuff is done
     """
     return list_envelope_gov_with_count(list_bodies())
 
+@govbody_bp.get("/<int:body_id>")
+def get_specific_body(body_id:int): #return later to add meeting count after meeting stuff is done
+    """
+        gets the governing bodies and displays them
+    """
+    return single_envelope_gov(list_body(body_id=body_id))
+
 @govbody_bp.post("")
 def create_new_body():
     """
@@ -28,11 +35,17 @@ def create_new_body():
 @govbody_bp.put("/<int:body_id>")
 def update_existing_body(body_id):
     body = request.get_json(silent=True) or {}
-    return single_envelope_gov(update_body(body_id,body)),200
+    output = update_body(body_id,body)
+    if output is None:
+        return jsonify(error="not found"),404
+    return single_envelope_gov(output),200
 
 @govbody_bp.delete("/<int:body_id>")
 def delete_body_by_id(body_id):
-    success = delete_body(body_id)
-    if success:
-        return jsonify(status="deleted"),204
-    return jsonify(error="not found"),404
+    body = request.get_json(silent=True) or {}
+    if body_id == body["id"]:
+        success = delete_body(body_id)
+        if success:
+            return jsonify(status="deleted"),204
+        return jsonify(error="not_found"),404
+    return jsonify(error="bad_request",details="id needed in body"),400

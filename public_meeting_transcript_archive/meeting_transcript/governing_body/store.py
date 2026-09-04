@@ -4,7 +4,7 @@ from meeting_transcript.extensions import db
 from meeting_transcript.governing_body.models_db import GoverningBody
 from sqlalchemy import select,text,func
 from meeting_transcript.meetings.models_db import *
-
+from meeting_transcript.logging import log,logger
 
 
 def list_bodies()-> list[ListGoverningBodyDTO]:
@@ -23,7 +23,12 @@ def list_bodies()-> list[ListGoverningBodyDTO]:
             meeting_count=meeting_count
         )for body, meeting_count in rows
     ]
-    #return[governingBody.model_validate(row) for row in rows] #note to self, might need to change gov db and model names slightly to not only use caps to differentiate
+    #note to self, might need to change gov db and model names slightly to not only use caps to differentiate
+
+def list_body(body_id:int) -> governingBody:
+    valid_body = db.session.get(GoverningBody,body_id)
+    return governingBody.model_validate(valid_body)
+
 
 def create_body(body:dict):
     """
@@ -43,6 +48,7 @@ def update_body(body_id:int,body:dict):
     """
     valid_body = UpdateGoverningBodyDTO.model_validate(body)
     record = db.session.get(GoverningBody,body_id)
+    logger.debug(f"update record for body:{record}")
     if record is None:
         return None
     record.name = valid_body.name
@@ -52,6 +58,9 @@ def update_body(body_id:int,body:dict):
     return governingBody.model_validate(record)
 
 def delete_body(body_id:int):
+    """
+        deletes a governing body of a given id
+    """
     record = db.session.get(GoverningBody,body_id)
     if record is None:
         return False
