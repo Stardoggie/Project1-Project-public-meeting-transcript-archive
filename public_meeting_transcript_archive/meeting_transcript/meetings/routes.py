@@ -28,13 +28,12 @@ def create_new_meetings(body_id:int):
         creates a meeting for specified body
     """
     meeting = request.get_json(silent=True) or {}
+    #try:
     try:
-        try:
-            return single_envelope_meeting(create_meeting(body_id,meeting)),201
-        except Exception as e:
-            return jsonify(error="not_found",detail="governing body was not found"),404
+        return single_envelope_meeting(create_meeting(body_id,meeting)),201
+        
     except ValidationError as e:
-        return jsonify(error="Invalid Field",detail=e.errors()),400
+            return jsonify(error="Invalid Field",detail=e.errors()),400
 
 
 @meetings_bp.put("/<int:body_id>/meetings/<int:meeting_id>")

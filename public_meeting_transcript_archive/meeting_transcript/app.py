@@ -104,7 +104,7 @@ def create_app():
     #handles unknown errors
     @app.errorhandler(Exception)
     def handle_Unhandled_Exception(error: Exception):
-        app.logger.exception("unhandled Exception",error)
+        app.logger.exception("unhandled Exception: %s",error)
         return error_response("internal",500,"an unexpected error ocurred")
         #can handle status codes as well
     #handles not found errors

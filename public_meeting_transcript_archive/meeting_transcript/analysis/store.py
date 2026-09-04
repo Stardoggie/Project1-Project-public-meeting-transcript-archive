@@ -58,7 +58,7 @@ def get_trending_entities(body_id:int)->dict:
       return  {"trending-entities":rows}
 
 
-def get_meeting_topic(body_id:int,phrase:str):
+def get_meeting_topic(body_id:int,phrase:str)->list[ListMeetingsDTO]:
      """
         find meeting with a specific phrase in a specific body
      """

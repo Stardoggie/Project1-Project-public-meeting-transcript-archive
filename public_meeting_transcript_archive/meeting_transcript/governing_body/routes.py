@@ -19,7 +19,10 @@ def get_specific_body(body_id:int): #return later to add meeting count after mee
     """
         gets the governing bodies and displays them
     """
-    return single_envelope_gov(list_body(body_id=body_id))
+    body = list_body(body_id=body_id)
+    if body is None:
+        return jsonify(error="not_found"), 404
+    return single_envelope_gov(body)
 
 @govbody_bp.post("")
 def create_new_body():

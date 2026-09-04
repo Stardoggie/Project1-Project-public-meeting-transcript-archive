@@ -70,7 +70,7 @@ def create_meeting(body_id:int, meeting:dict)-> Meetings:
     return Meetings.model_validate(record)
 
 
-def edit_meeting(meeting_id:int, meeting:dict):
+def edit_meeting(meeting_id:int, meeting:dict)->Meetings|None:
     """
         updates the meeting's title or meeting date
     """
@@ -84,7 +84,7 @@ def edit_meeting(meeting_id:int, meeting:dict):
     return Meetings.model_validate(record)
 
 
-def delete_meeting(meeting_id:int):
+def delete_meeting(meeting_id:int)->bool:
     record = db.session.get(Meeting,meeting_id)
     if record is None:
         return False

@@ -31,7 +31,7 @@ def add_audio_to_meeting(body_id:int,meeting_id:int):
 
 @transcribe_bp.post("/<int:body_id>/meetings/<int:meeting_id>/transcribe")
 def start_transcription(body_id:int,meeting_id:int):
-    return start_transcription_job(meeting_id)
+    return start_transcription_job(meeting_id),202
 
 @transcribe_bp.post("/<int:body_id>/meetings/<int:meeting_id>/transcribe/status")
 def get_transcription(body_id,meeting_id):
@@ -43,7 +43,7 @@ def get_specific_transcript(body_id:int,meeting_id:int):
     try:
         transcript = get_transcript(meeting_id)
         if transcript is not None:
-            return jsonify(transcript),200
+            return jsonify(transcript)
     except Exception:
         pass
 

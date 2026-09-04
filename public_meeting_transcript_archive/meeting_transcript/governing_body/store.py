@@ -25,12 +25,15 @@ def list_bodies()-> list[ListGoverningBodyDTO]:
     ]
     #note to self, might need to change gov db and model names slightly to not only use caps to differentiate
 
-def list_body(body_id:int) -> governingBody:
+def list_body(body_id:int) -> governingBody | None:
     valid_body = db.session.get(GoverningBody,body_id)
+    if valid_body is None:
+        return None
+
     return governingBody.model_validate(valid_body)
 
 
-def create_body(body:dict):
+def create_body(body:dict)->governingBody:
     """
         creates new governing bodies
     """
@@ -42,7 +45,7 @@ def create_body(body:dict):
     db.session.commit()
     return governingBody.model_validate(record)
 
-def update_body(body_id:int,body:dict):
+def update_body(body_id:int,body:dict)->governingBody|None:
     """
         updates existing governing bodies
     """
@@ -57,7 +60,7 @@ def update_body(body_id:int,body:dict):
     db.session.commit()
     return governingBody.model_validate(record)
 
-def delete_body(body_id:int):
+def delete_body(body_id:int)->bool:
     """
         deletes a governing body of a given id
     """
