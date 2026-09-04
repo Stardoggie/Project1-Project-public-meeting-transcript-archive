@@ -12,8 +12,8 @@ docker compose up --build
 - Amazon Comprehend
 - Amazon S3
 - Docker
-- PostgreSQL
-- Sqlalchemy
+- PostgreSQL 16.0+
+- Sqlalchemy 2.0
 - boto3
 - pydantic
 - pytest
