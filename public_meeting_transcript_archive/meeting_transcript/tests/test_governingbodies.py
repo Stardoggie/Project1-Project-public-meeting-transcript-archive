@@ -15,7 +15,6 @@ def test_create_body(client):
         },
     )
     assert response.status_code == 201
-    assert response.status_code == 201
 
 def test_get_bodies(client):
     response = client.get(BASE_URL)

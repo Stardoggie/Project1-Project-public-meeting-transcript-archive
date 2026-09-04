@@ -33,7 +33,6 @@ def test_meetings_filter_by_key_phrase(client):
         "/api/v1/governing-bodies/1/meetings?key-phrase=budget"
     )
     assert response.status_code == 200
-    assert response.status_code == 200
 
 def test_delete_meeting_not_found(client):
     response = client.delete(
