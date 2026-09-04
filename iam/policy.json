@@ -1,0 +1,27 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3TicketBucket",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Resource": [
+                "*"
+            ]
+        },
+        {
+            "Sid": "ManagedAiServicesNoResourceLevelSupport",
+            "Effect": "Allow",
+            "Action": [
+                "comprehend:DetectKeyPhrases",
+                "comprehend:DetectEntities",
+                "transcribe:StartTranscriptionJob",
+                "transcribe:GetTranscriptionJob"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
