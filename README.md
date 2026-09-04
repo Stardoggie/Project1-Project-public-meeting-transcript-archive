@@ -5,6 +5,20 @@ In the project folder after creating .venv: pip install -e .
 ## Run
 docker compose up --build
 
+## Technology
+- Python 3.14
+- Flask 3.0
+- Amazon Transcribe
+- Amazon Comprehend
+- Amazon S3
+- Docker
+- PostgreSQL
+- Sqlalchemy
+- boto3
+- pydantic
+- pytest
+
+
 ## Edge Case Decisions
 Asynchronous Transcription
 
