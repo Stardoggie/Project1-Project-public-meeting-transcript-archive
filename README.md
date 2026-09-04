@@ -1,6 +1,7 @@
 # Public Meeting Transcript Archive
 ## Install
-In the project folder after creating .venv: <br> pip install -e .       
+### In the project folder after creating .venv: <br> 
+pip install -e .       
 
 ## Run
 docker compose up --build
