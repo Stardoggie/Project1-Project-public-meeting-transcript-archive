@@ -58,3 +58,10 @@ When a governing body is deleted, it deletes all of the meetings, entities, and 
 ### Editing After Transcription
 
 Editing a meeting's title or meeting date does not retrigger transcription or Comprehend processing because the existing transcript was derived from the stored recording.
+## ERD,policy, and kanban board
+#### ERD
+doc/erd.png
+#### policy
+iam/policy.json
+#### kanban board
+https://github.com/users/Stardoggie/projects/1
