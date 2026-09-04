@@ -1,8 +1,8 @@
-Public Meeting Transcript Archive
-Install
-pip install -e .
+#Public Meeting Transcript Archive
+##Install
+pip install -e .       in the project folder
 
-Run
+##Run
 docker compose up --build
 
 Edge Case Decisions
