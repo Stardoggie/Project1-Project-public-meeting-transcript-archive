@@ -8,6 +8,17 @@ logger = logging.getLogger(__name__)
 from meeting_transcript.config import BUCKET_NAME
 from meeting_transcript.aws.s3client import upload_audio
 
+def _reset_analysis(record:Meeting)->None:
+    """
+        clears the old transcript and analysis so new audio gets transcribed and analyzed fresh
+    """
+    record.transcript = None
+    record.transcribe_job_name = None
+    record.analysis_completed = False
+    #delete-orphan cascade removes the old rows
+    record.entities.clear()
+    record.keys.clear()
+
 def add_audio(audio_bytes:bytes,filename:str,meeting_id:int,body_id:int)->dict |None:
     """
         this adds audio key to the db, it calls upload_audio() which stores the audio in s3
@@ -24,6 +35,7 @@ def add_audio(audio_bytes:bytes,filename:str,meeting_id:int,body_id:int)->dict |
     if record.body_id != body_id:
         return {"out":"out_of_bounds"}
     upload_audio(BUCKET_NAME,audio_key,audio_bytes)
+    _reset_analysis(record)
     record.audio_object_key = audio_key
     record.status = "recorded"
     db.session.commit()
@@ -32,12 +44,14 @@ def add_audio(audio_bytes:bytes,filename:str,meeting_id:int,body_id:int)->dict |
 def attach_audio(audio_key:str,meeting_id:int,body_id:int)->dict |None:
     """
         stores the key of audio already uploaded straight to s3 and marks the meeting recorded
+        any earlier transcript and analysis are cleared
     """
     record = db.session.get(Meeting,meeting_id)
     if record is None:
         return None
     if record.body_id != body_id:
         return {"out":"out_of_bounds"}
+    _reset_analysis(record)
     record.audio_object_key = audio_key
     record.status = "recorded"
     db.session.commit()

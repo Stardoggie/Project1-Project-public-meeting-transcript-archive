@@ -1,4 +1,5 @@
 """Tools that run the Public Meeting Transcript Archive's store and service code directly."""
+import re
 import uuid
 
 from strands import tool
@@ -15,6 +16,8 @@ from meeting_transcript.transcription import service as transcription
 
 MAX_TRANSCRIPT_CHARS = 40_000
 UPLOAD_URL_SECONDS = 3600
+# The only key shape request_audio_upload hands out
+AUDIO_KEY_PATTERN = re.compile(r"audio/meeting-transcription-[0-9a-f]{32}\.(mp3|wav)")
 
 _flask = create_app()  # only used for its database context
 
@@ -146,6 +149,8 @@ def request_audio_upload(filename: str) -> dict:
     """Get a one-hour URL the user can upload a meeting recording (MP3 or WAV, max 500 MB) to with an HTTP PUT.
 
     After the user says the upload is done, call attach_uploaded_audio with the returned audio_key.
+    When deployed, the URL is signed with the runtime's temporary credentials and may expire before
+    the hour is up; if an upload is rejected as expired, request a new URL.
     """
     extension = filename.rsplit(".", 1)[-1].lower()
     if extension not in transcription.ALLOWED_AUDIO_EXTENSIONS:
@@ -159,7 +164,13 @@ def request_audio_upload(filename: str) -> dict:
 
 @tool
 def attach_uploaded_audio(body_id: int, meeting_id: int, audio_key: str) -> dict:
-    """Attach an uploaded recording (from request_audio_upload) to a meeting and mark it recorded."""
+    """Attach an uploaded recording (from request_audio_upload) to a meeting and mark it recorded.
+
+    This replaces any earlier recording and clears that meeting's transcript, entities and key phrases.
+    If the meeting already has a transcript, confirm with the user before calling this.
+    """
+    if not AUDIO_KEY_PATTERN.fullmatch(audio_key):
+        return {"error": "invalid_audio_key", "detail": "Use the audio_key returned by request_audio_upload."}
     try:
         size = get_s3_client().head_object(Bucket=BUCKET_NAME, Key=audio_key)["ContentLength"]
     except Exception:

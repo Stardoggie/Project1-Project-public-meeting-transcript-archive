@@ -1,4 +1,5 @@
 import boto3
+from botocore.config import Config
 from functools import lru_cache
 from meeting_transcript.config import AWS_REGION
 
@@ -24,8 +25,9 @@ def get_client(service_name:str):
 def get_s3_client():
     """
         gets the s3 client for use in s3client.py
+        uses SigV4 so presigned upload urls work on buckets made after 2020
     """
-    return get_session().client("s3")
+    return get_session().client("s3",config=Config(signature_version="s3v4"))
 #get s3
 @lru_cache(maxsize=None)
 def get_transcribe_client():

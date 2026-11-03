@@ -19,7 +19,8 @@
                 "comprehend:DetectKeyPhrases",
                 "comprehend:DetectEntities",
                 "transcribe:StartTranscriptionJob",
-                "transcribe:GetTranscriptionJob"
+                "transcribe:GetTranscriptionJob",
+                "transcribe:DeleteTranscriptionJob"
             ],
             "Resource": "*"
         }
