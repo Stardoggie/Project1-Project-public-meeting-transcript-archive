@@ -22,6 +22,9 @@ def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99)->Non
         for entity in entity_response["Entities"]:
             if entity["Score"] >= min_score and entity["Type"] in allowed_types:   
                 text = entity["Text"].lower()
+                #entity column holds 150 chars, same limit as key phrases
+                if len(text) > 150:
+                    continue
                 if text not in entity_counts:
                     entity_counts[text] = 0
                 entity_counts[text] += 1
@@ -31,7 +34,8 @@ def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99)->Non
         """
         for phrase in phrase_response["KeyPhrases"]:
             #text added to this one for more filtering out of actual garbage phrases like uh and tomorrow 
-            text = phrase["Text"].strip()
+            #checks and the stored value use the same text so it fits the 150 char column
+            text = phrase["Text"].strip().lower()
             if phrase["Score"] < min_score:
                 continue
             if len(text.split()) < 2:
@@ -43,12 +47,12 @@ def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99)->Non
             if not any(char.isalpha() for char in text):
                 continue
 
-            if text.lower() in ignored_phrases:
+            if text in ignored_phrases:
                 continue
             
             if len(text) < 5:
                 continue
-            key_phrase.add(phrase["Text"].lower())
+            key_phrase.add(text)
     add_entities_and_phrases(key_phrase,entity_counts,meeting_id)
 
 

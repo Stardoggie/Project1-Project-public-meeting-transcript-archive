@@ -31,18 +31,25 @@ def add_audio_to_meeting(body_id:int,meeting_id:int):
 
 @transcribe_bp.post("/<int:body_id>/meetings/<int:meeting_id>/transcribe")
 def start_transcription(body_id:int,meeting_id:int):
-    return start_transcription_job(meeting_id),202
+    result = start_transcription_job(meeting_id)
+    if result.get("error") == "not_found":
+        return result,404
+    return result,202
 
 @transcribe_bp.post("/<int:body_id>/meetings/<int:meeting_id>/transcribe/status")
 def get_transcription(body_id,meeting_id):
     #gets transcript from aws and stores it in db
-    return get_transcription_job(meeting_id)
+    result = get_transcription_job(meeting_id)
+    if result.get("error") == "not_found":
+        return result,404
+    return result
 
 @transcribe_bp.get("/<int:body_id>/meetings/<int:meeting_id>/transcript")
 def get_specific_transcript(body_id:int,meeting_id:int):
     try:
         transcript = get_transcript(meeting_id)
-        if transcript is not None:
+        #a dict means the meeting doesn't exist
+        if transcript is not None and not isinstance(transcript,dict):
             return jsonify(transcript)
     except Exception:
         pass

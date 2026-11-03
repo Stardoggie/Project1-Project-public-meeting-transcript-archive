@@ -9,8 +9,17 @@
                 "s3:PutObject"
             ],
             "Resource": [
-                "*"
+                "arn:aws:s3:::lg-transcription-bucket/audio/*",
+                "arn:aws:s3:::lg-transcription-bucket/transcripts/*"
             ]
+        },
+        {
+            "Sid": "S3MissingObjectsReturn404",
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListBucket"
+            ],
+            "Resource": "arn:aws:s3:::lg-transcription-bucket"
         },
         {
             "Sid": "ManagedAiServicesNoResourceLevelSupport",

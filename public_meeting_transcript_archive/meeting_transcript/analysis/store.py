@@ -22,6 +22,10 @@ def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int)-
     """
         store entites and phrases in db
     """
+    #the meeting can be deleted while comprehend runs, so skip the inserts
+    meeting = db.session.get(Meeting, meeting_id)
+    if meeting is None:
+        return
 
         #comprehend is in a dictionary, so have to convert it into a usable dictionary
     for entity,count in entity_counts.items():
@@ -42,9 +46,7 @@ def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int)-
             valid_phrase = CreatePhraseDTO.model_validate(phrase_dto_data)
             record = KeyPhrases(phrase=valid_phrase.phrase, meeting_id=valid_phrase.meeting_id)
             db.session.add(record)
-    meeting = db.session.get(Meeting, meeting_id)
-    if meeting is not None:
-        meeting.analysis_completed = True
+    meeting.analysis_completed = True
 
     db.session.commit()
 
@@ -62,10 +64,12 @@ def get_meeting_topic(body_id:int,phrase:str)->list[ListMeetingsDTO]:
      """
         find meeting with a specific phrase in a specific body
      """
+     #escape like wildcards so % and _ in the search match literally
+     escaped = phrase.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")
      stmt = (
          select(Meeting)
          .join(KeyPhrases, KeyPhrases.meeting_id == Meeting.id)
-         .where((Meeting.body_id == body_id) & (KeyPhrases.phrase.ilike(f"%{phrase}%")))
+         .where((Meeting.body_id == body_id) & (KeyPhrases.phrase.ilike(f"%{escaped}%",escape="\\")))
          .distinct()
      )
      rows = db.session.execute(stmt).scalars().all()

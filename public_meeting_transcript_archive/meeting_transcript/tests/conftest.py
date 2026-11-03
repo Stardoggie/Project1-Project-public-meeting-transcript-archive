@@ -5,14 +5,21 @@ from meeting_transcript.extensions import db
 from meeting_transcript.governing_body.models_db import GoverningBody
 from meeting_transcript.meetings.models_db import Meeting
 import os
+from sqlalchemy.engine import make_url
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    #create_app builds the engine from DATABASE_URL, so point it at the test db first
+    test_url = os.environ["DATABASE_TEST_URL"]
+    dev_url = os.environ.get("DATABASE_URL")
+    #drop_all runs after each test, so never let it touch the dev db
+    if dev_url:
+        assert make_url(test_url).database != make_url(dev_url).database, "DATABASE_TEST_URL points at the same database as DATABASE_URL; use a separate test database."
+    monkeypatch.setenv("DATABASE_URL",test_url)
     app = create_app()
 
     app.config.update(
         TESTING=True,
-        SQLALCHEMY_DATABASE_URI=os.environ["DATABASE_TEST_URL"] ,
     )
 
     with app.app_context():
