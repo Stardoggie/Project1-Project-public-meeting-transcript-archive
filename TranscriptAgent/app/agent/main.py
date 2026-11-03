@@ -1,24 +1,22 @@
 from functools import lru_cache
 
-from strands import Agent, tool
+from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from parse import parse_payload
 from memory.session import get_memory_session_manager
+from transcript_tools import TOOLS
 
-DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant. Use tools when appropriate."
-
-# Define a collection of tools used by the model
-tools = []
-
-# Define a simple function tool
-@tool
-def add_numbers(a: int, b: int) -> int:
-    """Return the sum of two numbers"""
-    return a + b
-
-tools.append(add_numbers)
+DEFAULT_SYSTEM_PROMPT = """You manage and explore an archive of public meeting transcripts for clerks and residents.
+Use the tools for every fact; never invent meetings, dates, or quotes.
+If you don't know a governing body's id, call list_governing_bodies first.
+Dates are YYYY-MM-DD. A meeting has a transcript only when transcript_available is true.
+To add a recording: request_audio_upload, give the user the URL to PUT the file to, wait for them to say it's done,
+then attach_uploaded_audio and start_transcription. Transcription takes minutes; use check_transcription when asked.
+Before any delete, state exactly what will be removed (deleting a governing body removes all its meetings)
+and only proceed with confirmed=True after the user explicitly says yes.
+When quoting a transcript, name the meeting and date."""
 
 def _make_conversation_manager():
     return NullConversationManager()
@@ -33,7 +31,7 @@ def _get_agent(session_id: str, actor_id: str) -> Agent:
         session_manager=get_memory_session_manager(session_id, actor_id),
         conversation_manager=_make_conversation_manager(),
         system_prompt=DEFAULT_SYSTEM_PROMPT,
-        tools=tools,
+        tools=TOOLS,
     )
 
 def create_app():

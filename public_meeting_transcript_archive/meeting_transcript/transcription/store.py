@@ -29,6 +29,20 @@ def add_audio(audio_bytes:bytes,filename:str,meeting_id:int,body_id:int)->dict |
     db.session.commit()
     return {"audio_key":audio_key}
 
+def attach_audio(audio_key:str,meeting_id:int,body_id:int)->dict |None:
+    """
+        stores the key of audio already uploaded straight to s3 and marks the meeting recorded
+    """
+    record = db.session.get(Meeting,meeting_id)
+    if record is None:
+        return None
+    if record.body_id != body_id:
+        return {"out":"out_of_bounds"}
+    record.audio_object_key = audio_key
+    record.status = "recorded"
+    db.session.commit()
+    return {"audio_key":audio_key}
+
 def get_audio_key(meeting_id:int)->str:
     """
         gets the audio key for transcription from db

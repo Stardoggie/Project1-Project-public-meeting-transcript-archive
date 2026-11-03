@@ -17,3 +17,6 @@ agentcore/.cli/*
 
 # CDK
 agentcore/cdk/cdk.out/
+
+# AgentCore build staging
+agentcore/.cache/
