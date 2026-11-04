@@ -1,38 +1,39 @@
-from functools import lru_cache
+import os
 
-from strands import Agent
-from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+
+from graph import build_graph
 from model.load import load_model
 from parse import parse_payload
-from memory.session import get_memory_session_manager
-from transcript_tools import TOOLS
 
-DEFAULT_SYSTEM_PROMPT = """You manage and explore an archive of public meeting transcripts for clerks and residents.
-Use the tools for every fact; never invent meetings, dates, or quotes.
-If you don't know a governing body's id, call list_governing_bodies first.
-Dates are YYYY-MM-DD. A meeting has a transcript only when transcript_available is true.
-To add a recording: request_audio_upload, give the user the URL to PUT the file to, wait for them to say it's done,
-then attach_uploaded_audio and start_transcription. Transcription takes minutes; use check_transcription when asked.
-Before any delete, state exactly what will be removed (deleting a governing body removes all its meetings)
-and only proceed with confirmed=True after the user explicitly says yes.
-When quoting a transcript, name the meeting and date."""
+MEMORY_ID = os.getenv("MEMORY_AGENTMEMORY_ID")
+MAX_EVENT_CHARS = 2000
 
-def _make_conversation_manager():
-    return NullConversationManager()
 
-@lru_cache(maxsize=128)
-def _get_agent(session_id: str, actor_id: str) -> Agent:
-    """Given a session_id and actor_id, return or construct the corresponding Strands agent.
-    Note: caching helps avoid repeated identity fetches on non-bedrock model loads
-    and supports in-memory session management for local dev."""
-    return Agent(
-        model=load_model(),
-        session_manager=get_memory_session_manager(session_id, actor_id),
-        conversation_manager=_make_conversation_manager(),
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        tools=TOOLS,
-    )
+def _make_checkpointer():
+    """AgentCore Memory when deployed (set by agentcore deploy), in-process memory for local dev."""
+    if MEMORY_ID:
+        from langgraph_checkpoint_aws import AgentCoreMemorySaver
+
+        return AgentCoreMemorySaver(MEMORY_ID, region_name=os.getenv("AWS_REGION"))
+    return InMemorySaver()
+
+
+graph = build_graph(load_model(), _make_checkpointer())
+
+
+def _event(node: str, message) -> dict:
+    """A compact, JSON-safe view of one message produced by a graph node."""
+    event = {"node": node, "type": message.type, "text": message.text[:MAX_EVENT_CHARS]}
+    if getattr(message, "tool_calls", None):
+        event["tool_calls"] = [{"name": call["name"], "args": call["args"]} for call in message.tool_calls]
+    if message.type == "tool":
+        event["tool"] = message.name
+    return event
+
 
 def create_app():
     app = BedrockAgentCoreApp()
@@ -40,23 +41,37 @@ def create_app():
 
     @app.entrypoint
     async def invoke(payload, context):
-        log.info("Invoking Agent.....")
-
         session_id = getattr(context, "session_id", None) or "default-session"
-        prompt, actor_id = parse_payload(payload)
+        try:
+            prompt, actor_id = parse_payload(payload)
+        except ValueError as e:
+            yield {"error": str(e)}
+            return
+        if not isinstance(prompt, str) or not prompt.strip():
+            yield {"error": "payload must be a JSON object with a non-empty string 'prompt'"}
+            return
 
         log.info(f"Invoking with session_id={session_id} and actor_id={actor_id}")
-        agent = _get_agent(session_id, actor_id)
+        config = {"configurable": {"thread_id": session_id, "actor_id": actor_id}, "recursion_limit": 50}
 
-        async for event in agent.stream_async(prompt):
-            if not isinstance(event, dict) or "event" not in event:
-                continue
-            cbs = event["event"].get("contentBlockStart")
-            if cbs is not None and not cbs.get("start"):
-                continue
-            yield event
+        # A paused confirmation takes this message (or an explicit "confirm": true/false) as its answer
+        state = await graph.aget_state(config)
+        if state.interrupts:
+            graph_input = Command(resume=payload.get("confirm", prompt))
+        else:
+            graph_input = {"messages": [HumanMessage(prompt)]}
+
+        async for update in graph.astream(graph_input, config, stream_mode="updates"):
+            for node, data in update.items():
+                if node == "__interrupt__":
+                    for item in data:
+                        yield {"node": "confirm", "type": "confirmation_required", **item.value}
+                    continue
+                for message in (data or {}).get("messages", []):
+                    yield _event(node, message)
 
     return app
+
 
 app = create_app()
 if __name__ == "__main__":

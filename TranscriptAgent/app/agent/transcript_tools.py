@@ -1,8 +1,9 @@
 """Tools that run the Public Meeting Transcript Archive's store and service code directly."""
+import functools
 import re
 import uuid
 
-from strands import tool
+from langchain_core.tools import tool as _lc_tool
 
 from meeting_transcript.app import create_app
 from meeting_transcript.aws.aws import get_s3_client
@@ -20,6 +21,9 @@ UPLOAD_URL_SECONDS = 3600
 AUDIO_KEY_PATTERN = re.compile(r"audio/meeting-transcription-[0-9a-f]{32}\.(mp3|wav)")
 
 _flask = create_app()  # only used for its database context
+
+# Send each docstring's Args section to the model as per-argument descriptions
+tool = functools.partial(_lc_tool, parse_docstring=True, error_on_invalid_docstring=False)
 
 
 def _dump(value):
@@ -81,7 +85,7 @@ def update_governing_body(body_id: int, name: str, body: str, description: str) 
 def delete_governing_body(body_id: int, confirmed: bool = False) -> dict:
     """Delete a governing body AND all of its meetings, transcripts, entities and key phrases.
 
-    Only call with confirmed=True after the user has explicitly confirmed this exact deletion.
+    The app asks the user to confirm before this runs and sets confirmed itself; leave confirmed unset.
     """
     if not confirmed:
         return {"error": "confirmation_required", "detail": "Ask the user to confirm first."}
@@ -135,7 +139,7 @@ def update_meeting(meeting_id: int, title: str, meeting_date: str) -> dict:
 def delete_meeting(meeting_id: int, confirmed: bool = False) -> dict:
     """Delete a meeting and its transcript and analysis.
 
-    Only call with confirmed=True after the user has explicitly confirmed this exact deletion.
+    The app asks the user to confirm before this runs and sets confirmed itself; leave confirmed unset.
     """
     if not confirmed:
         return {"error": "confirmation_required", "detail": "Ask the user to confirm first."}
@@ -167,7 +171,7 @@ def attach_uploaded_audio(body_id: int, meeting_id: int, audio_key: str) -> dict
     """Attach an uploaded recording (from request_audio_upload) to a meeting and mark it recorded.
 
     This replaces any earlier recording and clears that meeting's transcript, entities and key phrases.
-    If the meeting already has a transcript, confirm with the user before calling this.
+    If the meeting already has a transcript, the app asks the user to confirm before this runs.
     """
     if not AUDIO_KEY_PATTERN.fullmatch(audio_key):
         return {"error": "invalid_audio_key", "detail": "Use the audio_key returned by request_audio_upload."}
@@ -213,6 +217,12 @@ def get_transcript(meeting_id: int) -> dict:
 def get_trending_entities(body_id: int) -> dict:
     """Get the 50 people, places and organizations mentioned most across a governing body's meetings."""
     return _run(analysis.get_trending_entities, body_id)
+
+
+def meeting_has_transcript(meeting_id: int) -> bool:
+    """True if the meeting exists and already has a transcript (not a tool; used for confirmation routing)."""
+    meeting = _run(meetings.list_meeting, meeting_id)
+    return isinstance(meeting, dict) and bool(meeting.get("transcript_available"))
 
 
 TOOLS = [

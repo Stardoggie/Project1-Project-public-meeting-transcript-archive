@@ -5,15 +5,19 @@ build-backend = "hatchling.build"
 [project]
 name = "agent"
 version = "0.1.0"
-description = "AgentCore Runtime Application using Strands SDK"
+description = "AgentCore Runtime Application using LangGraph"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "aws-opentelemetry-distro ~= 0.21.0",
-    "bedrock-agentcore[strands-agents] >= 1.18.1, < 2.0.0",
+    "bedrock-agentcore~=1.22.0",
     "botocore[crt] ~= 1.43.0",
+    "langchain~=1.4.0",
+    "langchain-aws~=1.7.5",
+    "langgraph~=1.2.11",
+    "langgraph-checkpoint-aws>=1.2.6",
+    "opentelemetry-instrumentation-langchain~=0.62.3",
     "public-meeting-transcript-archive",
-    "strands-agents >= 1.62.0, < 2.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
