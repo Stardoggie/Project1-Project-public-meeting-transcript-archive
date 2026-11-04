@@ -21,10 +21,18 @@ DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_ar
 AWS_REGION=us-east-1
 MEETING_BUCKET_NAME=<your bucket>
 ```
-For the tests, also set `DATABASE_TEST_URL` to a separate database (for example in a `.env` at the repo root).
+`agentcore dev` is the only thing that reads `.env.local`. The migration and test commands below need the same three
+settings from your environment or from a `.env` at the repo root (which `meeting_transcript/config.py` loads), plus
+`DATABASE_TEST_URL` pointing at a separate database for the tests:
+```
+DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive
+DATABASE_TEST_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive_test
+AWS_REGION=us-east-1
+MEETING_BUCKET_NAME=<your bucket>
+```
 
 ### Create the database tables
-In `public_meeting_transcript_archive/`, with `DATABASE_URL` set:
+In `public_meeting_transcript_archive/`, with `DATABASE_URL`, `AWS_REGION` and `MEETING_BUCKET_NAME` set (see above):
 ```
 pip install -e ".[dev]"
 flask --app meeting_transcript.app db upgrade
@@ -42,7 +50,7 @@ Then send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
 - Agent graph: `pytest tests` in `TranscriptAgent/app/agent/`
 
-Both use `DATABASE_TEST_URL` and refuse to run against the `DATABASE_URL` database.
+Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
 
 ## Technology
 - Python 3.14
