@@ -9,29 +9,40 @@ commands like `deploy`, `dev`, and `invoke` rely on the configuration stored her
 ## Agent Root
 
 The main entrypoint to your app is defined in `main.py`. Using the AgentCore SDK `@app.entrypoint` decorator, this
-file defines a Starlette ASGI app with the Strands Agent SDK running within.
+file defines a Starlette ASGI app that runs a LangGraph graph.
 
-`model/load.py` instantiates the chosen model provider.
+- `graph/graph.py` wires the graph: `agent` → `tools` → `agent`, with destructive tool calls routed to `confirm`.
+- `graph/nodes.py` holds the nodes, the system prompt and the rules for which tool calls need the user's confirmation.
+- `transcript_tools.py` defines the archive tools; `model/load.py` instantiates the Bedrock model.
 
-## Input Validation
-
-Validate invocation input before forwarding it to Strands. Keep plain prompts typed as strings. If the app accepts a
-caller-supplied message history, retain `_strip_trailing_tool_use()` in `parse.py`, which normalizes the history tail
-before invoking the agent.
+Conversation state is checkpointed per session: AgentCore Memory when deployed (`MEMORY_AGENTMEMORY_ID`), in-process
+memory locally.
 
 ## Payload
 
 The Runtime accepts a JSON object. `parse_payload()` reads:
 
-- `prompt` (string) — a single user message. Used when `messages` is absent; defaults to `""`.
-- `messages` (array) — a full conversation history (`[{"role": ..., "content": [...]}]`). Takes precedence over `prompt`; trailing `toolUse` blocks are stripped before the agent runs.
-- `actorId` (string, optional) — identifies the end user for Memory scoping (e.g. `/users/{actorId}/facts`). Defaults to `"default"`.
+- `prompt` (string) — the user's message. The conversation history is kept per session, so send only the new message.
+- `confirm` (boolean, optional) — answers a pending confirmation without a prompt. `true` runs the action; anything else cancels it.
+- `actorId` (string, optional) — identifies the end user for Memory. Defaults to `"default"`.
 
-Provide either `prompt` or `messages`. The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header (`context.session_id`); reuse it to continue a conversation.
+The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header (`context.session_id`); reuse it to continue a conversation.
 
 ```json
-{ "prompt": "What's the weather?", "actorId": "user-123" }
+{ "prompt": "Delete meeting 12", "actorId": "user-123" }
 ```
+
+## Confirmations
+
+Deleting a governing body or meeting, or replacing the audio of a meeting that already has a transcript, pauses the
+graph. The response ends with a `confirmation_required` event describing exactly what will happen. The next request in
+the same session answers it: a bare yes (`"yes"`, `"ok"`, `"yes please"`, or `"confirm": true`) runs the action.
+Anything else cancels it; a reply other than a plain no is then handled as a new message.
+
+## Response events
+
+Each streamed event is a JSON object with `node` (`agent`, `tools` or `confirm`), `type` (`ai`, `tool` or
+`confirmation_required`) and `text`; `ai` events that call tools add `tool_calls`, and `tool` events add `tool`.
 
 ## Environment Variables
 

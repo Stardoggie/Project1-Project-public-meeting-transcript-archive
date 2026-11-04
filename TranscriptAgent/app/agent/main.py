@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from graph import build_graph
+from graph import build_graph, close_dangling_tool_calls
 from model.load import load_model
 from parse import parse_payload
 
@@ -47,19 +47,31 @@ def create_app():
         except ValueError as e:
             yield {"error": str(e)}
             return
-        if not isinstance(prompt, str) or not prompt.strip():
-            yield {"error": "payload must be a JSON object with a non-empty string 'prompt'"}
+        if not isinstance(prompt, str):
+            yield {"error": "send a 'prompt' string; the conversation history is kept per session"}
             return
 
         log.info(f"Invoking with session_id={session_id} and actor_id={actor_id}")
         config = {"configurable": {"thread_id": session_id, "actor_id": actor_id}, "recursion_limit": 50}
 
-        # A paused confirmation takes this message (or an explicit "confirm": true/false) as its answer
         state = await graph.aget_state(config)
         if state.interrupts:
-            graph_input = Command(resume=payload.get("confirm", prompt))
+            # A paused confirmation takes an explicit "confirm": true/false, or this message, as its answer
+            answer = payload.get("confirm", prompt)
+            if answer is None or (isinstance(answer, str) and not answer.strip()):
+                yield {"error": "a confirmation is waiting; send 'confirm' (true/false) or a 'prompt' reply"}
+                return
+            graph_input = Command(resume=answer)
         else:
-            graph_input = {"messages": [HumanMessage(prompt)]}
+            if not prompt.strip():
+                if "confirm" in payload:
+                    yield {"error": "there is no confirmation waiting in this session"}
+                else:
+                    yield {"error": "payload must be a JSON object with a non-empty string 'prompt'"}
+                return
+            # Close tool calls a cut-off request left unanswered, or Bedrock rejects the history from now on
+            dangling = close_dangling_tool_calls(state.values.get("messages", []))
+            graph_input = {"messages": [*dangling, HumanMessage(prompt)]}
 
         async for update in graph.astream(graph_input, config, stream_mode="updates"):
             for node, data in update.items():

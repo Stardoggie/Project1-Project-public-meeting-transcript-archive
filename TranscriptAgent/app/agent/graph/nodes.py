@@ -1,20 +1,9 @@
-"""LangGraph graph for the transcript archive agent.
-
-    START -> agent -> (no tool calls)         -> END
-                   -> (ordinary tool calls)   -> tools -> agent
-                   -> (destructive tool call) -> confirm -> agent
-                                                 (yes: runs the calls; anything else: runs nothing)
-
-The confirm node pauses the graph with interrupt() until the user answers, so a delete (or replacing a
-meeting's transcribed audio) can only run after an explicit yes, whatever the model passes as arguments.
-"""
+"""Nodes of the transcript archive graph, and the rules for which tool calls need the user's confirmation."""
 import json
 import re
-from typing import Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langgraph.graph import END, START, MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.graph import MessagesState
 from langgraph.types import Command, interrupt
 
 from transcript_tools import TOOLS, meeting_has_transcript
@@ -30,9 +19,11 @@ removed and asks them to confirm before it runs. If a tool result says the user 
 When quoting a transcript, name the meeting and date."""
 
 DELETE_TOOLS = {"delete_governing_body", "delete_meeting"}
-YES = re.compile(r"\s*(y|yes|yeah|yep|confirm|confirmed|go ahead|do it|proceed|ok|okay|sure)\b", re.IGNORECASE)
+# Only a bare yes confirms; "yes, but only the first one" or "ok, what does that remove?" are new requests
+YES = re.compile(r"\s*(y|yes|yeah|yep|confirm|confirmed|go ahead|do it|proceed|ok|okay|sure)(\s+please)?\W*$", re.IGNORECASE)
 NO = re.compile(r"\s*(n|no|nope|cancel|stop|don't|do not|never mind|nevermind)\b\W*$", re.IGNORECASE)
 DECLINED = "Not run: the user did not confirm this action, so nothing was changed."
+INTERRUPTED = "Not run: the previous request ended before this tool ran, so nothing was changed."
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 
@@ -70,6 +61,19 @@ def run_confirmed(call: dict) -> ToolMessage:
     return ToolMessage(content=content, name=call["name"], tool_call_id=call["id"])
 
 
+def close_dangling_tool_calls(messages: list) -> list[ToolMessage]:
+    """"Not run" results for tool calls a cut-off request left unanswered, so the history stays valid for Bedrock."""
+    last_ai = next((i for i in range(len(messages) - 1, -1, -1) if isinstance(messages[i], AIMessage)), None)
+    if last_ai is None or not messages[last_ai].tool_calls:
+        return []
+    answered = {m.tool_call_id for m in messages[last_ai + 1:] if isinstance(m, ToolMessage)}
+    return [
+        ToolMessage(content=INTERRUPTED, name=call["name"], tool_call_id=call["id"])
+        for call in messages[last_ai].tool_calls
+        if call["id"] not in answered
+    ]
+
+
 def _for_model(message):
     # Bedrock rejects empty tool results, so an empty list would reach the model as a bare "."
     if isinstance(message, ToolMessage) and message.content in ("", []):
@@ -77,8 +81,8 @@ def _for_model(message):
     return message
 
 
-def build_graph(model, checkpointer=None):
-    """Compile the agent graph around a chat model that supports tool calling."""
+def make_agent_node(model):
+    """The agent node: the chat model with the archive tools bound, behind the system prompt."""
     model_with_tools = model.bind_tools(TOOLS)
 
     async def agent(state: MessagesState):
@@ -86,37 +90,24 @@ def build_graph(model, checkpointer=None):
         reply = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT), *history])
         return {"messages": [reply]}
 
-    def route_after_agent(state: MessagesState) -> Literal["tools", "confirm", "__end__"]:
-        calls = getattr(state["messages"][-1], "tool_calls", None) or []
-        if not calls:
-            return END
-        if any(needs_confirmation(call) for call in calls):
-            return "confirm"
-        return "tools"
+    return agent
 
-    def confirm(state: MessagesState) -> Command[Literal["agent"]]:
-        last = state["messages"][-1]
-        guarded = [call for call in last.tool_calls if needs_confirmation(call)]
-        actions = [describe(call) for call in guarded]
-        # Pauses here; the next request's answer comes back as `reply`
-        reply = interrupt({
-            "question": "Please confirm: " + "; ".join(actions) + ". Reply yes to continue or no to cancel.",
-            "actions": actions,
-        })
-        if is_yes(reply):
-            # Run them here so the model's own tool call stays as it wrote it (without confirmed)
-            return Command(goto="agent", update={"messages": [run_confirmed(call) for call in last.tool_calls]})
-        declined = [ToolMessage(content=DECLINED, name=call["name"], tool_call_id=call["id"]) for call in last.tool_calls]
-        # Anything other than a plain no is a new request, so pass it on to the model
-        if isinstance(reply, str) and reply.strip() and not NO.match(reply):
-            declined.append(HumanMessage(reply))
-        return Command(goto="agent", update={"messages": declined})
 
-    graph = StateGraph(MessagesState)
-    graph.add_node("agent", agent)
-    graph.add_node("tools", ToolNode(TOOLS))
-    graph.add_node("confirm", confirm, destinations=("agent",))
-    graph.add_edge(START, "agent")
-    graph.add_conditional_edges("agent", route_after_agent, ["tools", "confirm", END])
-    graph.add_edge("tools", "agent")
-    return graph.compile(checkpointer=checkpointer)
+def confirm(state: MessagesState) -> Command:
+    """Pause until the user answers; a bare yes runs the calls, anything else runs nothing."""
+    last = state["messages"][-1]
+    guarded = [call for call in last.tool_calls if needs_confirmation(call)]
+    actions = [describe(call) for call in guarded]
+    # Pauses here; the next request's answer comes back as `reply`
+    reply = interrupt({
+        "question": "Please confirm: " + "; ".join(actions) + ". Reply yes to continue or no to cancel.",
+        "actions": actions,
+    })
+    if is_yes(reply):
+        # Run them here so the model's own tool call stays as it wrote it (without confirmed)
+        return Command(goto="agent", update={"messages": [run_confirmed(call) for call in last.tool_calls]})
+    declined = [ToolMessage(content=DECLINED, name=call["name"], tool_call_id=call["id"]) for call in last.tool_calls]
+    # Anything other than a plain no is a new request, so pass it on to the model
+    if isinstance(reply, str) and reply.strip() and not NO.match(reply):
+        declined.append(HumanMessage(reply))
+    return Command(goto="agent", update={"messages": declined})

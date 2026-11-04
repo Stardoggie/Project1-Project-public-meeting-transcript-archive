@@ -7,7 +7,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 import transcript_tools as t
-from graph import DECLINED, build_graph, needs_confirmation
+from graph import DECLINED, INTERRUPTED, build_graph, close_dangling_tool_calls, is_yes, needs_confirmation
 from meeting_transcript.extensions import db
 from meeting_transcript.meetings.models_db import Meeting
 
@@ -154,3 +154,63 @@ def test_replacing_audio_needs_confirmation_only_when_a_transcript_exists():
     assert needs_confirmation(call("attach_uploaded_audio", {"body_id": 1, "meeting_id": 999999, "audio_key": "x"})) is False
     assert needs_confirmation(call("delete_meeting", {"meeting_id": meeting["id"]})) is True
     assert needs_confirmation(call("get_meeting", {"meeting_id": meeting["id"]})) is False
+
+
+def test_only_a_bare_yes_confirms():
+    for reply in ["yes", "Yes!", "y", "ok", "OK.", "sure", "yes please", "confirm", "go ahead", True]:
+        assert is_yes(reply), reply
+    for reply in [
+        "Yes, but only the first one", "ok, what exactly does that remove?", "sure? wait no",
+        "yes delete meeting 6 instead", "Do it later", "no", "", None, 1, "false", False,
+    ]:
+        assert not is_yes(reply), reply
+
+
+def test_partial_yes_runs_nothing_and_becomes_a_new_request():
+    first, second = new_body(), new_body()
+    graph, model = make_graph(
+        AIMessage(content="", tool_calls=[
+            call("delete_governing_body", {"body_id": first["id"]}, "call-1"),
+            call("delete_governing_body", {"body_id": second["id"]}, "call-2"),
+        ]),
+        AIMessage(content="Which one should I delete?"),
+    )
+    run(graph, {"messages": [HumanMessage("delete both")]})
+    reply = "Yes, but only the first one, keep the second"
+    result, state = run(graph, Command(resume=reply))
+    assert body_exists(first["id"]) and body_exists(second["id"])
+    assert [m.content for m in result["messages"] if isinstance(m, ToolMessage)] == [DECLINED, DECLINED]
+    assert model.seen[-1][-1].content == reply and not state.interrupts
+
+
+def test_cut_off_request_leaves_a_history_bedrock_accepts():
+    graph, model = make_graph(
+        AIMessage(content="", tool_calls=[call("list_governing_bodies", {})]),
+        AIMessage(content="Hello again."),
+    )
+    config = {"configurable": {"thread_id": "t1"}}
+
+    async def stop_after_agent():
+        async for update in graph.astream({"messages": [HumanMessage("list")]}, config, stream_mode="updates"):
+            if "agent" in update:
+                break  # client disconnects after the model asked for a tool, before it ran
+
+    asyncio.run(stop_after_agent())
+    messages = graph.get_state(config).values["messages"]
+    dangling = close_dangling_tool_calls(messages)
+    assert [(m.tool_call_id, m.content) for m in dangling] == [("call-1", INTERRUPTED)]
+
+    # main.py sends the closing results with the next message, as here
+    asyncio.run(graph.ainvoke({"messages": [*dangling, HumanMessage("hello again")]}, config))
+    seen = model.seen[-1]
+    assert [type(m).__name__ for m in seen[1:]] == ["HumanMessage", "AIMessage", "ToolMessage", "HumanMessage"]
+    assert close_dangling_tool_calls(graph.get_state(config).values["messages"]) == []
+
+
+def test_close_dangling_ignores_answered_calls():
+    ai = AIMessage(content="", tool_calls=[call("list_governing_bodies", {}, "a"), call("get_meeting", {"meeting_id": 1}, "b")])
+    answered = ToolMessage(content="[]", tool_call_id="a")
+    assert [m.tool_call_id for m in close_dangling_tool_calls([HumanMessage("x"), ai, answered])] == ["b"]
+    assert close_dangling_tool_calls([HumanMessage("x"), ai, answered, ToolMessage(content="{}", tool_call_id="b")]) == []
+    assert close_dangling_tool_calls([HumanMessage("x"), AIMessage(content="done")]) == []
+    assert close_dangling_tool_calls([]) == []
