@@ -39,12 +39,21 @@ flask --app meeting_transcript.app db upgrade
 ```
 
 ## Run
+Start the agent in one terminal:
 ```
 cd TranscriptAgent
 agentcore dev
 ```
-Then send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "..."}` and the header
+Then chat with it from another, using the terminal chat (see `TranscriptAgent/cli/README.md`):
+```
+cd TranscriptAgent/cli
+python chat.py
+archive> upload "C:\Recordings\hearing.mp3" Budget Hearing, Springfield City Council
+```
+Other clients can send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "..."}` and the header
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation).
+
+A simple web chat page is shelved on the `web-ui` branch (`git checkout web-ui -- TranscriptAgent/ui` brings it back).
 
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`

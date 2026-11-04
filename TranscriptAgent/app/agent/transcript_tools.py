@@ -83,8 +83,9 @@ def update_governing_body(body_id: int, name: str, body: str, description: str) 
 
 @tool
 def delete_governing_body(body_id: int, confirmed: bool = False) -> dict:
-    """Delete a governing body AND all of its meetings, transcripts, entities and key phrases.
+    """Delete a governing body AND all of its meetings, transcripts, entities and key phrases from the archive.
 
+    The recording files in S3 and past Transcribe jobs are kept; only the archive's records are deleted.
     The app asks the user to confirm before this runs and sets confirmed itself; leave confirmed unset.
     """
     if not confirmed:
@@ -137,8 +138,9 @@ def update_meeting(meeting_id: int, title: str, meeting_date: str) -> dict:
 
 @tool
 def delete_meeting(meeting_id: int, confirmed: bool = False) -> dict:
-    """Delete a meeting and its transcript and analysis.
+    """Delete a meeting and its transcript and analysis from the archive.
 
+    The recording file in S3 and past Transcribe jobs are kept; only the archive's records are deleted.
     The app asks the user to confirm before this runs and sets confirmed itself; leave confirmed unset.
     """
     if not confirmed:
