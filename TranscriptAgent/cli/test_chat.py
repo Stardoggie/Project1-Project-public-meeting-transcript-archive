@@ -269,3 +269,56 @@ def test_upload_without_a_meeting_stays_to_answer(recordings, monkeypatch):
     monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: setattr(self, "pending_path", None))
     chat_module.main()
     assert loops == []
+
+
+def test_a_path_at_the_end_of_a_sentence(recordings, tmp_path):
+    hearing = tmp_path / "hearing.mp3"
+    hearing.write_bytes(b"ID3")
+    assert find_recording(f"Please upload {hearing}.") == (str(hearing), "Please upload")
+    assert find_recording(f"{hearing}. It's for the zoning meeting.") == (str(hearing), "It's for the zoning meeting")
+    assert find_recording("hearing.mp3.") == ("hearing.mp3", "")
+    assert find_recording("C:\\nope\\missing.mp3.") == ("C:\\nope\\missing.mp3", "")
+    assert find_recording("Tell me about notes.mp3.") == (None, "Tell me about notes.mp3.")
+
+
+def test_a_path_under_the_home_folder_is_expanded(tmp_path, monkeypatch):
+    import sys
+    import chat as chat_module
+
+    (tmp_path / "Music").mkdir()
+    real = tmp_path / "Music" / "hearing.mp3"
+    real.write_bytes(b"ID3")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    typed = "~\\Music\\hearing.mp3"
+    assert find_recording(f"{typed} for zoning") == (typed, "for zoning")
+    assert find_recording(f'"{typed}"') == (typed, "")
+
+    chat = FakeChat([UPLOAD_EVENTS, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    chat.handle(f"{typed} for zoning")
+    assert chat.uploaded == [str(real)] and "named hearing.mp3 for this meeting: for zoning" in chat.sent[0]["prompt"]
+
+    chat = FakeChat([UPLOAD_EVENTS, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: typed)
+    chat.handle("I want to add a recording to the zoning meeting")
+    assert chat.uploaded == [str(real)]
+
+    pending = []
+    monkeypatch.setattr(chat_module, "find_agent_url", lambda: "http://agent.invalid")
+    monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: None)
+    monkeypatch.setattr(chat_module.Chat, "loop", lambda self: pending.append(self.pending_path))
+    monkeypatch.setattr(sys, "argv", ["chat.py", "--upload", typed])
+    chat_module.main()
+    assert pending == [str(real)]
+
+
+def test_a_single_quoted_path_with_an_apostrophe_inside(tmp_path):
+    folder = tmp_path / "Recs"
+    folder.mkdir()
+    path = folder / "Bob's.mp3"
+    path.write_bytes(b"ID3")
+    assert find_recording(f"'{path}'") == (str(path), "")
+    assert find_recording(f"'{path}' for the mayor's meeting") == (str(path), "for the mayor's meeting")
+    assert find_recording("'C:\\nope\\Bob's.mp3'")[0] != "s.mp3"  # never the fragment after the apostrophe

@@ -32,7 +32,7 @@ the agent asks:
   /quit   exit
 """
 # Where a recording's path ends, and where an unquoted path can start
-AUDIO_END = re.compile(r"\.(?:mp3|wav)(?=$|[\s,;:!?)\]])", re.IGNORECASE)
+AUDIO_END = re.compile(r"\.(?:mp3|wav)(?=$|[\s,;:!?)\]]|\.(?:\s|$))", re.IGNORECASE)  # also before a full stop
 PATH_START = re.compile(r"(?:^|(?<=\s))(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|~[\\/])")
 QUOTED = re.compile(r"([\"'])(.+?)\1")
 # A quoted string that is a whole path: it starts like one and ends at an extension, or is one audio file name
@@ -63,7 +63,7 @@ def _rest(text: str, start: int, end: int) -> str:
     """The message with the path cut out: what's left says which meeting it's for."""
     rest = f"{text[:start]} {text[end:]}"
     rest = UPLOAD_WORD.sub("", rest)
-    return re.sub(r"\s+", " ", rest).strip(" ,;:-")
+    return re.sub(r"\s+", " ", rest).strip(" ,;:-.")
 
 
 def find_recording(line: str) -> tuple[str | None, str]:
@@ -79,15 +79,21 @@ def find_recording(line: str) -> tuple[str | None, str]:
         dragged = DRAGGED.match(text)
         if dragged:
             candidate = dragged.group(1).replace("''", "'").strip()
-            if os.path.isfile(candidate) or _looks_like_path(candidate):
+            if os.path.isfile(os.path.expanduser(candidate)) or _looks_like_path(candidate):
                 return candidate, _rest(text, dragged.start(), dragged.end())
-    # Try a quote at every position, so an apostrophe (Here's, mayor's) can't hide or swallow a quoted path
-    for pos in (i for i, char in enumerate(text) if char in "\"'"):
+    # Try a quote at every position, so an apostrophe (Here's, mayor's) can't hide or swallow a quoted path; one
+    # straight after a letter or digit is an apostrophe, not an opening quote
+    for pos in (i for i, char in enumerate(text) if char in "\"'" and not (i and text[i - 1].isalnum())):
         match = QUOTED.match(text, pos)
         if not match:
             continue
+        # Later closing quotes too, outermost first, so an apostrophe inside ('C:\Recs\Bob's.mp3') can't cut a file short
+        for close in reversed([i for i in range(match.end(), len(text)) if text[i] == text[pos]]):
+            candidate = text[pos + 1:close].strip()
+            if os.path.isfile(os.path.expanduser(candidate)):
+                return candidate, _rest(text, pos, close + 1)
         candidate = match.group(2).strip()
-        if os.path.isfile(candidate) or WHOLE_PATH.fullmatch(candidate):
+        if os.path.isfile(os.path.expanduser(candidate)) or WHOLE_PATH.fullmatch(candidate):
             return candidate, _rest(text, match.start(), match.end())
     for end_match in AUDIO_END.finditer(text):
         end = end_match.end()
@@ -95,7 +101,7 @@ def find_recording(line: str) -> tuple[str | None, str]:
         word_start = max(text.rfind(" ", 0, end) + 1, 0)
         # Earliest start first, so an unquoted path with spaces is matched whole
         for start in sorted(set(starts + [word_start])):
-            if os.path.isfile(text[start:end]):
+            if os.path.isfile(os.path.expanduser(text[start:end])):
                 return text[start:end], _rest(text, start, end)
         if starts:
             start = starts[-1]
@@ -187,7 +193,7 @@ class Chat:
                 print("  Not uploaded.")
                 return None
             found, _ = find_recording(answer)
-            path = found or answer.strip("\"'")
+            path = os.path.expanduser(found or answer.strip("\"'"))
             problem = check_recording(path)
             if problem:
                 print(f"  {problem}")
@@ -212,6 +218,7 @@ class Chat:
         return self.send({"prompt": "The upload is done. Attach it to that meeting and start transcription."})
 
     def upload(self, path: str, meeting: str):
+        path = os.path.expanduser(path)  # ~\Music\hearing.mp3, typed or from --upload
         problem = check_recording(path)
         if problem:
             print(f"  {problem}")
