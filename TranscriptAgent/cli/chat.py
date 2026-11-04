@@ -3,6 +3,7 @@
     python chat.py                                   interactive chat
     python chat.py "What meetings are there?"        ask one question and exit
     python chat.py --upload PATH --meeting "Budget Hearing, Springfield City Council"
+    python chat.py --upload PATH                     upload; chats until the agent knows which meeting
 
 Start the agent first with `agentcore dev` in TranscriptAgent/.
 """
@@ -34,6 +35,9 @@ the agent asks:
 AUDIO_END = re.compile(r"\.(?:mp3|wav)(?=$|[\s,;:!?)\]])", re.IGNORECASE)
 PATH_START = re.compile(r"(?:^|(?<=\s))(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|~[\\/])")
 QUOTED = re.compile(r"([\"'])(.+?)\1")
+# A quoted string that is a whole path: it starts like one and ends at an extension, or is one audio file name
+WHOLE_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|~[\\/]).*\.\w+|\S+\.(?:mp3|wav)", re.IGNORECASE | re.DOTALL)
+DRAGGED = re.compile(r"'((?:[^']|'')*)'")  # PowerShell's single quotes, where '' is an apostrophe
 URL = re.compile(r"https?://", re.IGNORECASE)
 UPLOAD_WORD = re.compile(r"^\s*/?upload\b[\s:,-]*", re.IGNORECASE)
 
@@ -72,9 +76,18 @@ def find_recording(line: str) -> tuple[str | None, str]:
     text = line.strip()
     if text.startswith("& "):  # PowerShell prefixes dragged paths with the call operator
         text = text[2:].lstrip()
-    for match in QUOTED.finditer(text):
+        dragged = DRAGGED.match(text)
+        if dragged:
+            candidate = dragged.group(1).replace("''", "'").strip()
+            if os.path.isfile(candidate) or _looks_like_path(candidate):
+                return candidate, _rest(text, dragged.start(), dragged.end())
+    # Try a quote at every position, so an apostrophe (Here's, mayor's) can't hide or swallow a quoted path
+    for pos in (i for i, char in enumerate(text) if char in "\"'"):
+        match = QUOTED.match(text, pos)
+        if not match:
+            continue
         candidate = match.group(2).strip()
-        if os.path.isfile(candidate) or _looks_like_path(candidate):
+        if os.path.isfile(candidate) or WHOLE_PATH.fullmatch(candidate):
             return candidate, _rest(text, match.start(), match.end())
     for end_match in AUDIO_END.finditer(text):
         end = end_match.end()
@@ -139,10 +152,16 @@ class Chat:
     def show_transcript(self, shown: dict):
         name = f"{shown['title']} {shown['meeting_date']}"
         path = os.path.join(self.transcript_dir, safe_filename(name) + ".txt")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(shown["transcript"])
         print(f"\n----- Full transcript: {shown['title']} ({shown['meeting_date']}) -----\n")
         print(shown["transcript"])
+        try:
+            os.makedirs(self.transcript_dir, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(shown["transcript"])
+        except OSError as e:
+            print(f"\n----- end of transcript ({len(shown['transcript']):,} characters) -----")
+            print(f"  Couldn't save the transcript to {path}: {e}")
+            return
         print(f"\n----- end of transcript ({len(shown['transcript']):,} characters), saved to {path} -----")
 
     def confirm(self, result: dict) -> dict:
@@ -212,7 +231,8 @@ class Chat:
         if not line:
             return True
         command = line.split(maxsplit=1)[0].lower()
-        if command in ("/quit", "/exit", "quit", "exit"):
+        # Bare quit/exit only as the whole line, so "Exit polls: ..." is a question
+        if command in ("/quit", "/exit") or line.lower() in ("quit", "exit"):
             return False
         if command == "/help":
             print(HELP)
@@ -270,6 +290,8 @@ def main():
     chat = Chat(agent_url, args.transcripts)
     if args.upload:
         chat.upload(args.upload, args.meeting or "")
+        if chat.pending_path and not args.message:
+            chat.loop()  # the agent asked which meeting it's for; stay so the user can answer
     if args.message:
         chat.handle(" ".join(args.message))
     if not args.upload and not args.message:

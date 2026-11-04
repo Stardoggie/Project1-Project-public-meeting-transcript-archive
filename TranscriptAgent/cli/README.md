@@ -37,6 +37,8 @@ archive> Delete the Budget Hearing meeting
 python chat.py "Which meetings talked about parking?"
 python chat.py --upload "C:\Recordings\hearing.mp3" --meeting "Budget Hearing, Springfield City Council"
 ```
+Without `--meeting`, the agent may ask which meeting the recording is for; the chat then stays open so you can
+answer, and the file is uploaded once it knows.
 
 The CLI finds `agentcore dev` on ports 8080–8089 by itself. Set `AGENT_URL` (or `--agent-url`) to use another
 endpoint.

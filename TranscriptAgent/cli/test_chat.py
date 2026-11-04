@@ -212,3 +212,60 @@ def test_a_pasted_block_is_read_as_one_message_and_prompts_ignore_leftovers(monk
     monkeypatch.setattr(console, "_discard", lambda: discarded.append(True))
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
     assert console.ask("Confirm? [y/N] ") == "y" and discarded == [True]
+
+
+def test_apostrophes_do_not_break_path_detection(recordings):
+    assert find_recording("Here's C:\\Recordings\\hearing.mp3 for the mayor's meeting") == (
+        "C:\\Recordings\\hearing.mp3", "Here's for the mayor's meeting")
+    assert find_recording(f"It's \"{recordings}\", for the mayor's meeting") == (recordings, "It's , for the mayor's meeting")
+    assert find_recording("It's \"C:\\nope\\missing.mp3\", for the mayor's meeting")[0] == "C:\\nope\\missing.mp3"
+
+
+def test_dragged_powershell_path_with_an_apostrophe(tmp_path):
+    folder = tmp_path / "Bob's Recs"
+    folder.mkdir()
+    path = folder / "hearing.mp3"
+    path.write_bytes(b"ID3")
+    escaped = str(path).replace("'", "''")
+    assert find_recording(f"& '{escaped}'") == (str(path), "")
+    assert find_recording(f"& '{escaped}' Budget Hearing") == (str(path), "Budget Hearing")
+
+
+def test_a_transcript_that_cant_be_saved_is_still_shown(tmp_path, capsys):
+    blocker = tmp_path / "taken"
+    blocker.write_text("a file, not a folder")
+    chat = Chat("http://agent.invalid", str(blocker / "sub"))
+    chat.show_transcript({"title": "Budget Hearing", "meeting_date": "2026-01-05", "transcript": "Mayor: Hello."})
+    out = capsys.readouterr().out
+    assert "Mayor: Hello." in out and "Couldn't save the transcript to" in out
+
+    chat = Chat("http://agent.invalid", str(tmp_path / "new folder"))
+    chat.show_transcript({"title": "Budget Hearing", "meeting_date": "2026-01-05", "transcript": "Mayor: Hello."})
+    assert (tmp_path / "new folder" / "Budget Hearing 2026-01-05.txt").read_text(encoding="utf-8") == "Mayor: Hello."
+
+
+def test_bare_quit_only_as_the_whole_line():
+    chat = FakeChat([[{"type": "ai", "text": "The March meeting."}]])
+    assert chat.handle("Exit polls: which meeting discussed them?") is True
+    assert chat.sent == [{"prompt": "Exit polls: which meeting discussed them?"}]
+    for line in ("quit", "  EXIT ", "/quit", "/exit now"):
+        assert chat.handle(line) is False
+
+
+def test_upload_without_a_meeting_stays_to_answer(recordings, monkeypatch):
+    import sys
+    import chat as chat_module
+
+    loops = []
+    monkeypatch.setattr(chat_module, "find_agent_url", lambda: "http://agent.invalid")
+    monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: None)  # the agent asks which meeting
+    monkeypatch.setattr(chat_module.Chat, "loop", lambda self: loops.append(self.pending_path))
+    monkeypatch.setattr(sys, "argv", ["chat.py", "--upload", recordings])
+    chat_module.main()
+    assert loops == [recordings]
+
+    loops.clear()
+    monkeypatch.setattr(sys, "argv", ["chat.py", "--upload", recordings, "--meeting", "Budget Hearing"])
+    monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: setattr(self, "pending_path", None))
+    chat_module.main()
+    assert loops == []
