@@ -1,6 +1,5 @@
 import io
 import json
-from unittest.mock import patch
 
 import boto3
 import pytest
@@ -15,30 +14,14 @@ AUDIO_KEY = "audio/meeting-transcription-0123456789abcdef0123456789abcdef.mp3"
 JOB_NAME = "meeting-transcription-0123456789abcdef0123456789abcdef"
 
 
-def test_transcribe_meeting(client, meeting):
-    with patch(
-        "meeting_transcript.transcription.service.get_audio_key",
-        return_value="audio/test-meeting.mp3",
-    ), patch(
-        "meeting_transcript.transcription.service.store_job_key"
-    ), patch(
-        "meeting_transcript.transcription.service.get_transcribe_client"
-    ) as mock_client:
-        response = client.post(
-            f"/api/v1/governing-bodies/1/meetings/{meeting['id']}/transcribe"
-        )
-    assert response.status_code == 202
-    assert response.status_code == 202
+NOT_FOUND = {"error": "not_found", "detail": "Meeting not found."}
 
 
-def test_transcribe_meeting_not_found(client):
-    response = client.post(
-        "/api/v1/governing-bodies/1/meetings/999999/transcribe"
-    )
-    assert response.status_code == 404
+def test_transcribe_meeting_not_found(app):
+    assert service.start_transcription_job(999999) == NOT_FOUND
 
 
-def test_get_transcription_status(client, meeting, monkeypatch):
+def test_get_transcription_status(meeting, monkeypatch):
     monkeypatch.setattr(
         "meeting_transcript.transcription.service.get_job_key",
         lambda meeting_id: "test-meeting"
@@ -55,27 +38,11 @@ def test_get_transcription_status(client, meeting, monkeypatch):
         "meeting_transcript.transcription.service.get_transcribe_client",
         lambda: FakeTranscribeClient()
     )
-    response = client.post(
-        f"/api/v1/governing-bodies/1/meetings/{meeting['id']}/transcribe/status"
-    )
-    assert response.status_code in (200, 202)
+    assert service.get_transcription_job(meeting["id"]) == {"job_name": "test-meeting", "status": "IN_PROGRESS"}
 
 
-
-def test_get_transcription_status_not_found(client):
-    response = client.post(
-        "/api/v1/governing-bodies/1/meetings/999999/transcribe/status"
-    )
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "not_found", "detail": "Meeting not found."}
-
-
-def test_transcribe_meeting_not_found_body(client):
-    response = client.post(
-        "/api/v1/governing-bodies/1/meetings/999999/transcribe"
-    )
-    assert response.get_json() == {"error": "not_found", "detail": "Meeting not found."}
-    assert response.status_code == 404
+def test_get_transcription_status_not_found(app):
+    assert service.get_transcription_job(999999) == NOT_FOUND
 
 
 # --- start/check against a stubbed Transcribe client ---

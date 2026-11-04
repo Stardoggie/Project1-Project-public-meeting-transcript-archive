@@ -3,10 +3,7 @@ from pydantic import ValidationError
 from meeting_transcript.extensions import db
 from meeting_transcript.meetings.models_db import Meeting
 import logging
-import uuid
 logger = logging.getLogger(__name__)
-from meeting_transcript.config import BUCKET_NAME
-from meeting_transcript.aws.s3client import upload_audio
 
 def _reset_analysis(record:Meeting)->None:
     """
@@ -18,28 +15,6 @@ def _reset_analysis(record:Meeting)->None:
     #delete-orphan cascade removes the old rows
     record.entities.clear()
     record.keys.clear()
-
-def add_audio(audio_bytes:bytes,filename:str,meeting_id:int,body_id:int)->dict |None:
-    """
-        this adds audio key to the db, it calls upload_audio() which stores the audio in s3
-    """
-    #takes in audio and places the audiokey in db while calling s3 to place it in 
-    extension = filename.rsplit(".",1)[-1].lower()
-    #generate unique job name for this file
-    job_name = f"meeting-transcription-{uuid.uuid4().hex}"
-    #putting the job name and extension together to create a unique file name
-    audio_key = f"audio/{job_name}.{extension}"
-    record = db.session.get(Meeting,meeting_id)
-    if record is None:
-        return None
-    if record.body_id != body_id:
-        return {"out":"out_of_bounds"}
-    upload_audio(BUCKET_NAME,audio_key,audio_bytes)
-    _reset_analysis(record)
-    record.audio_object_key = audio_key
-    record.status = "recorded"
-    db.session.commit()
-    return {"audio_key":audio_key}
 
 def attach_audio(audio_key:str,meeting_id:int,body_id:int)->dict |None:
     """

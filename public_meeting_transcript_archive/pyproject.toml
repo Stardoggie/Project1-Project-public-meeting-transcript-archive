@@ -1,7 +1,7 @@
 [project]
 name = "public-meeting-transcript-archive"
 version = "0.1.0"
-description = "A backend API for creating transcripts for public meetings using AWS transcribe and and AWS Compose for subject and speaker recognition"
+description = "Storage and AWS Transcribe/Comprehend logic for a public meeting transcript archive, used by an AgentCore agent"
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0",
@@ -28,3 +28,5 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["meeting_transcript*"]
+#tests run from the source folder, so keep them out of the installed package and the agent's deploy bundle
+exclude = ["meeting_transcript.tests*"]
