@@ -98,9 +98,9 @@ def find_recording(line: str) -> tuple[str | None, str]:
     for end_match in AUDIO_END.finditer(text):
         end = end_match.end()
         starts = [m.start() for m in PATH_START.finditer(text, 0, end)]
-        word_start = max(text.rfind(" ", 0, end) + 1, 0)
-        # Earliest start first, so an unquoted path with spaces is matched whole
-        for start in sorted(set(starts + [word_start])):
+        word_starts = [m.start() for m in re.finditer(r"(?<!\S)\S", text[:end])]  # a bare name can have spaces too
+        # Earliest start first, so an unquoted path or file name with spaces is matched whole
+        for start in sorted(set(starts + word_starts)):
             if os.path.isfile(os.path.expanduser(text[start:end])):
                 return text[start:end], _rest(text, start, end)
         if starts:

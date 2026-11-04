@@ -281,6 +281,17 @@ def test_a_path_at_the_end_of_a_sentence(recordings, tmp_path):
     assert find_recording("Tell me about notes.mp3.") == (None, "Tell me about notes.mp3.")
 
 
+def test_a_bare_file_name_with_spaces(recordings, tmp_path):
+    (tmp_path / "Budget Hearing 2024.mp3").write_bytes(b"ID3")
+    name = "Budget Hearing 2024.mp3"
+    assert find_recording(f"{name} for zoning") == (name, "for zoning")
+    assert find_recording(f"Add {name} to zoning") == (name, "Add to zoning")
+    assert find_recording(f"{name}. It's for the zoning meeting.") == (name, "It's for the zoning meeting")
+    assert find_recording(f"Please upload {name}.") == (name, "Please upload")
+    assert find_recording("Add Zoning Meeting 2024.mp3 to zoning") == (None, "Add Zoning Meeting 2024.mp3 to zoning")
+    assert find_recording("I uploaded meeting.mp3 yesterday") == (None, "I uploaded meeting.mp3 yesterday")
+
+
 def test_a_path_under_the_home_folder_is_expanded(tmp_path, monkeypatch):
     import sys
     import chat as chat_module
