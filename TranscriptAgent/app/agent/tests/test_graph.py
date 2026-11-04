@@ -260,3 +260,11 @@ def test_replies_are_not_shortened_but_tool_peeks_are():
     event = main._transcript_event("tools", shown)
     assert event["type"] == "transcript" and event["transcript"] == long_reply
     assert main._transcript_event("tools", ToolMessage(content="x", name="get_meeting", tool_call_id="c")) is None
+
+
+def test_upload_links_are_never_trimmed():
+    import main
+
+    link = '{"upload_url": "https://s3/' + "x" * 3000 + '", "audio_key": "audio/k.mp3", "method": "PUT"}'
+    event = main._event("tools", ToolMessage(content=link, name="request_audio_upload", tool_call_id="c"))
+    assert event["text"] == link

@@ -107,7 +107,9 @@ class Chat:
         self.agent_url = agent_url
         self.transcript_dir = transcript_dir
         self.session_id = new_session()
+        self.turn = 0  # counts the user's messages
         self.pending_path = None  # the recording to send when the agent hands out an upload link
+        self.pending_turn = 0  # the message that gave pending_path
 
     def send(self, payload: dict) -> dict | None:
         try:
@@ -152,6 +154,12 @@ class Chat:
     def finish_upload(self, url: str, audio_key: str | None = None) -> dict | None:
         """Upload the recording to the link the agent handed out, then have it attach and transcribe."""
         path, self.pending_path = self.pending_path, None
+        # A path from this message or the one before (e.g. answering "which meeting?") is used straight away; an
+        # older one may belong to a request the user dropped, so check before sending it somewhere new
+        if path and self.turn - self.pending_turn > 1:
+            answer = input(f"  Upload {os.path.basename(path)} (the file you gave earlier) for this? [y/N] ")
+            if answer.strip().lower() not in ("y", "yes"):
+                path = None
         while not path:
             answer = input("  Path to the recording (type it or drag the file here; Enter to cancel): ").strip()
             if not answer:
@@ -166,7 +174,7 @@ class Chat:
         # The link's name fixes the format Transcribe expects; if the agent guessed .mp3 for a .wav, get a matching one
         extension = os.path.splitext(path)[1].lower()
         if audio_key and not audio_key.lower().endswith(extension):
-            self.pending_path = path
+            self.pending_path, self.pending_turn = path, self.turn
             return self.send({"prompt": f"The recording is actually named {os.path.basename(path)}; "
                                         "get an upload link for that name instead."})
         size_mb = os.path.getsize(path) / 1024 / 1024
@@ -188,7 +196,7 @@ class Chat:
             print(f"  {problem}")
             return
         # Kept until the agent hands out an upload link, even if it first asks which meeting it's for
-        self.pending_path = path
+        self.pending_path, self.pending_turn = path, self.turn
         request = f"I want to upload a recording named {os.path.basename(path)}"
         if meeting:
             request += f" for this meeting: {meeting}"
@@ -212,6 +220,7 @@ class Chat:
             self.pending_path = None
             print("  Started a new conversation.")
             return True
+        self.turn += 1
         path, rest = find_recording(line)
         if path:
             self.upload(path, rest)

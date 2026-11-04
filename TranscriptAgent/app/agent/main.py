@@ -12,6 +12,8 @@ from parse import parse_payload
 MEMORY_ID = os.getenv("MEMORY_AGENTMEMORY_ID")
 # Tool results are only a peek at what a tool returned; the agent's own replies are never shortened
 MAX_TOOL_EVENT_CHARS = 2000
+# Clients read these tool results whole: the upload link carries temporary credentials and can pass 2,000 characters
+UNTRIMMED_TOOLS = {"request_audio_upload"}
 
 
 def _make_checkpointer():
@@ -28,7 +30,8 @@ graph = build_graph(load_model(), _make_checkpointer())
 
 def _event(node: str, message) -> dict:
     """A compact, JSON-safe view of one message produced by a graph node."""
-    text = message.text[:MAX_TOOL_EVENT_CHARS] if message.type == "tool" else message.text
+    trim = message.type == "tool" and message.name not in UNTRIMMED_TOOLS
+    text = message.text[:MAX_TOOL_EVENT_CHARS] if trim else message.text
     event = {"node": node, "type": message.type, "text": text}
     if getattr(message, "tool_calls", None):
         event["tool_calls"] = [{"name": call["name"], "args": call["args"]} for call in message.tool_calls]

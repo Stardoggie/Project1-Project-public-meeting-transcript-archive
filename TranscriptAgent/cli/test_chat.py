@@ -141,3 +141,40 @@ def test_a_link_for_the_wrong_format_is_replaced_before_uploading(tmp_path, monk
     chat.handle("I want to add a recording to the Peace Alliance meeting")
     assert chat.uploaded == ["https://s3/put-wav"]
     assert "hearing.wav" in chat.sent[1]["prompt"]
+
+
+def _asks(text="Which meeting is this recording for?"):
+    return [{"type": "ai", "text": text}]
+
+
+def test_a_file_from_an_older_message_is_not_uploaded_without_asking(recordings, monkeypatch):
+    chat = FakeChat([_asks(), _asks("Okay, I won't upload it."), UPLOAD_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    answers = iter(["", ""])  # "Upload ... for this? [y/N]" -> Enter, then the path prompt -> Enter
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or next(answers))
+    chat.handle(f'"{recordings}"')
+    chat.handle("Never mind, forget that recording")
+    chat.handle("I'd like to add a different recording to the zoning meeting")
+    assert chat.uploaded == []
+    assert "the file you gave earlier" in prompts[0] and "Path to the recording" in prompts[1]
+
+
+def test_a_file_from_an_older_message_is_uploaded_when_confirmed(recordings, monkeypatch):
+    chat = FakeChat([_asks(), _asks("Sure."), UPLOAD_EVENTS, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    chat.handle(f'"{recordings}"')
+    chat.handle("Let me think about which meeting")
+    chat.handle("It's for the zoning meeting")
+    assert chat.uploaded == [recordings]
+
+
+def test_new_conversation_forgets_the_file(recordings, monkeypatch):
+    chat = FakeChat([_asks(), UPLOAD_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    chat.handle(f'"{recordings}"')
+    chat.handle("/new")
+    chat.handle("I want to add a recording to the zoning meeting")
+    assert chat.uploaded == []
