@@ -48,7 +48,7 @@ Then chat with it from another, using the terminal chat (see `TranscriptAgent/cl
 ```
 cd TranscriptAgent/cli
 python chat.py
-archive> upload "C:\Recordings\hearing.mp3" Budget Hearing, Springfield City Council
+archive> C:\Recordings\hearing.mp3 Budget Hearing, Springfield City Council
 ```
 Other clients can send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "..."}` and the header
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation).
