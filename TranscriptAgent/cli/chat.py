@@ -14,6 +14,7 @@ import urllib.error
 import uuid
 
 from client import find_agent_url, invoke, put_file, summarize
+from console import ask, read_message
 
 ALLOWED_EXTENSIONS = {".mp3", ".wav"}
 MAX_BYTES = 500 * 1024 * 1024
@@ -33,6 +34,7 @@ the agent asks:
 AUDIO_END = re.compile(r"\.(?:mp3|wav)(?=$|[\s,;:!?)\]])", re.IGNORECASE)
 PATH_START = re.compile(r"(?:^|(?<=\s))(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|~[\\/])")
 QUOTED = re.compile(r"([\"'])(.+?)\1")
+URL = re.compile(r"https?://", re.IGNORECASE)
 UPLOAD_WORD = re.compile(r"^\s*/?upload\b[\s:,-]*", re.IGNORECASE)
 
 
@@ -147,7 +149,7 @@ class Chat:
         """Answer a pending confirmation with a [y/N] prompt; Enter or anything but yes cancels."""
         while result and result["confirmation"]:
             question = result["confirmation"].replace(" Reply yes to continue or no to cancel.", "")
-            answer = input(f"  {question} [y/N] ").strip().lower()
+            answer = ask(f"  {question} [y/N] ").strip().lower()
             result = self.send({"confirm": answer in ("y", "yes")})
         return result
 
@@ -157,11 +159,11 @@ class Chat:
         # A path from this message or the one before (e.g. answering "which meeting?") is used straight away; an
         # older one may belong to a request the user dropped, so check before sending it somewhere new
         if path and self.turn - self.pending_turn > 1:
-            answer = input(f"  Upload {os.path.basename(path)} (the file you gave earlier) for this? [y/N] ")
+            answer = ask(f"  Upload {os.path.basename(path)} (the file you gave earlier) for this? [y/N] ")
             if answer.strip().lower() not in ("y", "yes"):
                 path = None
         while not path:
-            answer = input("  Path to the recording (type it or drag the file here; Enter to cancel): ").strip()
+            answer = ask("  Path to the recording (type it or drag the file here; Enter to cancel): ").strip()
             if not answer:
                 print("  Not uploaded.")
                 return None
@@ -205,7 +207,7 @@ class Chat:
         self.send({"prompt": request})
 
     def handle(self, line: str) -> bool:
-        """Handle one line of input; False means quit."""
+        """Handle one message (a typed line or a whole pasted block); False means quit."""
         line = line.strip()
         if not line:
             return True
@@ -220,8 +222,12 @@ class Chat:
             self.pending_path = None
             print("  Started a new conversation.")
             return True
+        if not re.search(r"\w", line):
+            return True  # a stray backtick or bracket is not a request; don't let the agent act on it
         self.turn += 1
-        path, rest = find_recording(line)
+        # A file is handed over on a line of its own; a pasted block, a link or a command line that mentions a file
+        # (like `curl -T file.mp3 https://...`) is text to send, not a recording to upload
+        path, rest = (None, line) if "\n" in line or URL.search(line) else find_recording(line)
         if path:
             self.upload(path, rest)
         elif UPLOAD_WORD.fullmatch(line):
@@ -234,7 +240,7 @@ class Chat:
         print("Meeting Transcript Archive. Type /help for commands, /quit to exit.")
         while True:
             try:
-                line = input("archive> ")
+                line = read_message("archive> ")
             except (EOFError, KeyboardInterrupt):
                 print()
                 return

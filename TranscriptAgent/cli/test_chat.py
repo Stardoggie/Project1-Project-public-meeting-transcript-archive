@@ -170,6 +170,23 @@ def test_a_file_from_an_older_message_is_uploaded_when_confirmed(recordings, mon
     assert chat.uploaded == [recordings]
 
 
+def test_pasted_text_and_commands_are_not_uploads(recordings, monkeypatch):
+    chat = FakeChat([_asks("That looks pasted."), _asks("That's a command."), _asks("That's a link.")])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    chat.handle(f'Here is your link.\ncurl.exe -X PUT -T "{recordings}" "<the URL above>"')
+    chat.handle(f'curl.exe -X PUT -T "{recordings}" "https://bucket.s3.amazonaws.com/audio/x.mp3?X-Amz-Signature=1"')
+    chat.handle(f"{recordings} https://example.com")
+    assert chat.uploaded == [] and len(chat.sent) == 3
+    assert chat.sent[0]["prompt"].startswith("Here is your link.\ncurl.exe")  # a paste goes as one message
+
+
+def test_stray_punctuation_is_not_sent(monkeypatch):
+    chat = FakeChat([])
+    for junk in ("`", "``", "  `  ", "...", "[]"):
+        chat.handle(junk)
+    assert chat.sent == []
+
+
 def test_new_conversation_forgets_the_file(recordings, monkeypatch):
     chat = FakeChat([_asks(), UPLOAD_EVENTS])
     monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
@@ -178,3 +195,20 @@ def test_new_conversation_forgets_the_file(recordings, monkeypatch):
     chat.handle("/new")
     chat.handle("I want to add a recording to the zoning meeting")
     assert chat.uploaded == []
+
+
+def test_a_pasted_block_is_read_as_one_message_and_prompts_ignore_leftovers(monkeypatch):
+    import console
+
+    pasted = iter(["Here is your link.", "", "curl.exe -X PUT ...", "`"])
+    buffered = [True, True, True, False]  # three more lines waiting after the first, then nothing
+    monkeypatch.setattr(console, "_interactive", lambda: True)
+    monkeypatch.setattr(console, "PASTE_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(console, "_waiting", lambda: buffered.pop(0))
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(pasted))
+    assert console.read_message("archive> ") == "Here is your link.\n\ncurl.exe -X PUT ...\n`"
+
+    discarded = []
+    monkeypatch.setattr(console, "_discard", lambda: discarded.append(True))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert console.ask("Confirm? [y/N] ") == "y" and discarded == [True]

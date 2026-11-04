@@ -22,7 +22,12 @@ archive> Delete the Budget Hearing meeting
   message ("...hearing.mp3 is for the zoning meeting") or earlier in the chat; otherwise the agent asks, and the
   file is uploaded once it knows. If the agent is ready for a recording before you've given a path, the CLI asks for
   it. The file must be MP3 or WAV, up to 500 MB, and is checked before anything is uploaded.
-- **Confirmations:** deletes (and replacing a meeting's transcribed audio) ask `[y/N]`; Enter cancels.
+  Give the path on its own line: a pasted block, or a line with a link or command in it (like `curl -T file.mp3
+  https://...`), is sent as text and never uploads anything.
+- **Pasting:** a multi-line paste is sent as one message, not one per line. Lines of only punctuation (a stray
+  backtick) are ignored.
+- **Confirmations:** deletes (and replacing a meeting's transcribed audio) ask `[y/N]`; Enter cancels. Anything typed
+  or pasted before the question appears is thrown away, so only what you type after it answers.
 - **Full transcripts** are printed and saved as `<meeting> <date>.txt` in the current folder (`--transcripts DIR` to
   change it).
 - `/new` starts a new conversation, `/help` lists commands, `/quit` exits.
