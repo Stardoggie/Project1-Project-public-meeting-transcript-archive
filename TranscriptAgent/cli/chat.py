@@ -1,4 +1,4 @@
-"""Terminal chat for the meeting transcript agent, with recording uploads by file path.
+"""Terminal chat for the meeting transcript agent; give it a recording's file path and it uploads it.
 
     python chat.py                                   interactive chat
     python chat.py "What meetings are there?"        ask one question and exit
@@ -19,13 +19,21 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav"}
 MAX_BYTES = 500 * 1024 * 1024
 HELP = """Type a question or request, e.g. "What meetings does Springfield City Council have?"
 
-  upload <path> <meeting>   upload an MP3/WAV and start transcription, e.g.
-                            upload "C:\\Recordings\\hearing.mp3" Budget Hearing, Springfield City Council
-                            (you can drag the file into this window to paste its path)
-  /new                      start a new conversation
-  /help                     show this help
-  /quit                     exit
+To add a recording, give it the file's path, by typing it or dragging the file into this window. It uploads the
+file and starts transcription. Say which meeting it's for in the same message or earlier in the chat; otherwise
+the agent asks:
+  C:\\Recordings\\hearing.mp3 Budget Hearing, Springfield City Council
+  "C:\\My Recordings\\hearing.wav" is for the zoning meeting
+
+  /new    start a new conversation
+  /help   show this help
+  /quit   exit
 """
+# Where a recording's path ends, and where an unquoted path can start
+AUDIO_END = re.compile(r"\.(?:mp3|wav)(?=$|[\s,;:!?)\]])", re.IGNORECASE)
+PATH_START = re.compile(r"(?:^|(?<=\s))(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|~[\\/])")
+QUOTED = re.compile(r"([\"'])(.+?)\1")
+UPLOAD_WORD = re.compile(r"^\s*/?upload\b[\s:,-]*", re.IGNORECASE)
 
 
 def new_session() -> str:
@@ -41,18 +49,43 @@ def safe_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .") or "transcript"
 
 
-def parse_upload(rest: str) -> tuple[str, str]:
-    """Split 'upload' arguments into (path, meeting); the path may be quoted or pasted by drag and drop."""
-    rest = rest.strip()
-    if rest.startswith("& "):  # PowerShell prefixes dragged paths with the call operator
-        rest = rest[2:].lstrip()
-    if rest[:1] in ("'", '"'):
-        end = rest.find(rest[0], 1)
-        if end == -1:
-            raise ValueError("the file path is missing its closing quote")
-        return rest[1:end], rest[end + 1:].strip()
-    path, _, meeting = rest.partition(" ")
-    return path, meeting.strip()
+def _looks_like_path(text: str) -> bool:
+    return bool(AUDIO_END.search(text)) or (("\\" in text or "/" in text) and bool(os.path.splitext(text)[1]))
+
+
+def _rest(text: str, start: int, end: int) -> str:
+    """The message with the path cut out: what's left says which meeting it's for."""
+    rest = f"{text[:start]} {text[end:]}"
+    rest = UPLOAD_WORD.sub("", rest)
+    return re.sub(r"\s+", " ", rest).strip(" ,;:-")
+
+
+def find_recording(line: str) -> tuple[str | None, str]:
+    """Find a file path in what the user typed; returns (path, rest of the message), or (None, line) if there's none.
+
+    Handles quoted paths, paths dragged into the window (PowerShell adds "& "), unquoted paths (even with spaces)
+    and bare file names in the current folder. A path-like one that doesn't exist is still returned, so the user is
+    told it wasn't found instead of the agent guessing.
+    """
+    text = line.strip()
+    if text.startswith("& "):  # PowerShell prefixes dragged paths with the call operator
+        text = text[2:].lstrip()
+    for match in QUOTED.finditer(text):
+        candidate = match.group(2).strip()
+        if os.path.isfile(candidate) or _looks_like_path(candidate):
+            return candidate, _rest(text, match.start(), match.end())
+    for end_match in AUDIO_END.finditer(text):
+        end = end_match.end()
+        starts = [m.start() for m in PATH_START.finditer(text, 0, end)]
+        word_start = max(text.rfind(" ", 0, end) + 1, 0)
+        # Earliest start first, so an unquoted path with spaces is matched whole
+        for start in sorted(set(starts + [word_start])):
+            if os.path.isfile(text[start:end]):
+                return text[start:end], _rest(text, start, end)
+        if starts:
+            start = starts[-1]
+            return text[start:end], _rest(text, start, end)
+    return None, line
 
 
 def check_recording(path: str) -> str | None:
@@ -74,15 +107,20 @@ class Chat:
         self.agent_url = agent_url
         self.transcript_dir = transcript_dir
         self.session_id = new_session()
+        self.pending_path = None  # the recording to send when the agent hands out an upload link
 
-    def send(self, payload: dict, show: bool = True) -> dict | None:
+    def send(self, payload: dict) -> dict | None:
         try:
             result = summarize(invoke(self.agent_url, self.session_id, payload))
         except (urllib.error.URLError, OSError) as e:
             print(f"  Can't reach the agent at {self.agent_url} ({e}). Is `agentcore dev` running?")
             return None
-        if show:
-            self.show(result)
+        if result["upload_url"]:
+            # The agent is ready for a recording: upload it here instead of showing the link
+            for error in result["errors"]:
+                print(f"  Error: {error}")
+            return self.finish_upload(result["upload_url"], result["audio_key"])
+        self.show(result)
         return self.confirm(result)
 
     def show(self, result: dict):
@@ -111,38 +149,52 @@ class Chat:
             result = self.send({"confirm": answer in ("y", "yes")})
         return result
 
+    def finish_upload(self, url: str, audio_key: str | None = None) -> dict | None:
+        """Upload the recording to the link the agent handed out, then have it attach and transcribe."""
+        path, self.pending_path = self.pending_path, None
+        while not path:
+            answer = input("  Path to the recording (type it or drag the file here; Enter to cancel): ").strip()
+            if not answer:
+                print("  Not uploaded.")
+                return None
+            found, _ = find_recording(answer)
+            path = found or answer.strip("\"'")
+            problem = check_recording(path)
+            if problem:
+                print(f"  {problem}")
+                path = None
+        # The link's name fixes the format Transcribe expects; if the agent guessed .mp3 for a .wav, get a matching one
+        extension = os.path.splitext(path)[1].lower()
+        if audio_key and not audio_key.lower().endswith(extension):
+            self.pending_path = path
+            return self.send({"prompt": f"The recording is actually named {os.path.basename(path)}; "
+                                        "get an upload link for that name instead."})
+        size_mb = os.path.getsize(path) / 1024 / 1024
+        print(f"  Uploading {os.path.basename(path)} ({size_mb:,.1f} MB)...", end=" ", flush=True)
+        try:
+            status = put_file(url, path)
+        except (urllib.error.URLError, OSError) as e:
+            print(f"failed: {e}")
+            return None
+        if status != 200:
+            print(f"failed (HTTP {status}).")
+            return None
+        print("done.")
+        return self.send({"prompt": "The upload is done. Attach it to that meeting and start transcription."})
+
     def upload(self, path: str, meeting: str):
-        if not path:
-            print('  Usage: upload <path> <meeting>, e.g. upload "C:\\Recordings\\hearing.mp3" Budget Hearing')
-            return
         problem = check_recording(path)
         if problem:
             print(f"  {problem}")
             return
-        if not meeting:
-            print("  Say which meeting it's for, e.g.: upload hearing.mp3 Budget Hearing, Springfield City Council")
-            return
-        name = os.path.basename(path)
-        asked = self.send({"prompt": f"I want to upload a recording named {name} for this meeting: {meeting}"},
-                          show=False)
-        if asked is None:
-            return
-        if not asked["upload_url"]:
-            # The agent couldn't tell which meeting, or refused the file; show why
-            self.show(asked)
-            return
-        size_mb = os.path.getsize(path) / 1024 / 1024
-        print(f"  Uploading {name} ({size_mb:,.1f} MB)...", end=" ", flush=True)
-        try:
-            status = put_file(asked["upload_url"], path)
-        except (urllib.error.URLError, OSError) as e:
-            print(f"failed: {e}")
-            return
-        if status != 200:
-            print(f"failed (HTTP {status}).")
-            return
-        print("done.")
-        self.send({"prompt": "The upload is done. Attach it to that meeting and start transcription."})
+        # Kept until the agent hands out an upload link, even if it first asks which meeting it's for
+        self.pending_path = path
+        request = f"I want to upload a recording named {os.path.basename(path)}"
+        if meeting:
+            request += f" for this meeting: {meeting}"
+        else:
+            request += ". Use the meeting we've been talking about; if it isn't clear which one, ask me."
+        self.send({"prompt": request})
 
     def handle(self, line: str) -> bool:
         """Handle one line of input; False means quit."""
@@ -154,16 +206,17 @@ class Chat:
             return False
         if command == "/help":
             print(HELP)
-        elif command == "/new":
+            return True
+        if command == "/new":
             self.session_id = new_session()
+            self.pending_path = None
             print("  Started a new conversation.")
-        elif command in ("upload", "/upload"):
-            try:
-                path, meeting = parse_upload(line.split(maxsplit=1)[1] if " " in line else "")
-            except ValueError as e:
-                print(f"  {e}")
-                return True
-            self.upload(path, meeting)
+            return True
+        path, rest = find_recording(line)
+        if path:
+            self.upload(path, rest)
+        elif UPLOAD_WORD.fullmatch(line):
+            print("  Give it the recording's path, e.g. C:\\Recordings\\hearing.mp3 Budget Hearing")
         else:
             self.send({"prompt": line})
         return True
@@ -180,7 +233,7 @@ class Chat:
                 if not self.handle(line):
                     return
             except KeyboardInterrupt:
-                # Ctrl+C at a [y/N] prompt or mid-request; a paused confirmation is cancelled by the next message
+                # Ctrl+C at a prompt or mid-request; a paused confirmation is cancelled by the next message
                 print("\n  (interrupted)")
 
 
@@ -203,7 +256,7 @@ def main():
     if args.upload:
         chat.upload(args.upload, args.meeting or "")
     if args.message:
-        chat.send({"prompt": " ".join(args.message)})
+        chat.handle(" ".join(args.message))
     if not args.upload and not args.message:
         chat.loop()
 

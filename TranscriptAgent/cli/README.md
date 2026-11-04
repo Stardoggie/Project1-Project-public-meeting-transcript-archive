@@ -9,16 +9,19 @@ library (Python 3.11+), so there is nothing to install.
 
 ```
 archive> What meetings does Springfield City Council have?
-archive> upload "C:\Recordings\hearing.mp3" Budget Hearing, Springfield City Council
+archive> C:\Recordings\hearing.mp3 Budget Hearing, Springfield City Council
+  Uploading hearing.mp3 (12.4 MB)... done.
 archive> Check the transcription for Budget Hearing
 archive> Show me the full transcript of Budget Hearing
 archive> Delete the Budget Hearing meeting
   Please confirm: delete meeting 66 and its transcript and analysis. [y/N]
 ```
 
-- **Upload:** `upload <path> <meeting>`. Quote paths with spaces, or drag the file into the window to paste its path.
-  The file must be MP3 or WAV, up to 500 MB; it is checked before anything is uploaded. The CLI gets the upload link
-  from the agent, uploads the file to S3, and has the agent attach it and start transcription.
+- **Recordings:** just give it the file's path, by typing it or dragging the file into the window, and it uploads
+  the file itself and starts transcription; you never see an upload link. Say which meeting it's for in the same
+  message ("...hearing.mp3 is for the zoning meeting") or earlier in the chat; otherwise the agent asks, and the
+  file is uploaded once it knows. If the agent is ready for a recording before you've given a path, the CLI asks for
+  it. The file must be MP3 or WAV, up to 500 MB, and is checked before anything is uploaded.
 - **Confirmations:** deletes (and replacing a meeting's transcribed audio) ask `[y/N]`; Enter cancels.
 - **Full transcripts** are printed and saved as `<meeting> <date>.txt` in the current folder (`--transcripts DIR` to
   change it).

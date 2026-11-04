@@ -152,9 +152,10 @@ def delete_meeting(meeting_id: int, confirmed: bool = False) -> dict:
 
 @tool
 def request_audio_upload(filename: str) -> dict:
-    """Get a one-hour URL the user can upload a meeting recording (MP3 or WAV, max 500 MB) to with an HTTP PUT.
+    """Get a one-hour URL for a meeting recording (MP3 or WAV, max 500 MB); the user's app uploads the file to it.
 
-    After the user says the upload is done, call attach_uploaded_audio with the returned audio_key.
+    Don't show the URL or upload instructions to the user. After the app says the upload is done, call
+    attach_uploaded_audio with the returned audio_key.
     When deployed, the URL is signed with the runtime's temporary credentials and may expire before
     the hour is up; if an upload is rejected as expired, request a new URL.
     """

@@ -42,7 +42,7 @@ def summarize(events: list[dict]) -> dict:
     """Pull out what the CLI shows: replies and full transcripts (in order), tools used, a pending confirmation,
     an upload URL, errors."""
     result = {"replies": [], "transcripts": [], "items": [], "tools": [], "confirmation": None, "upload_url": None,
-              "errors": []}
+              "audio_key": None, "errors": []}
     for event in events:
         if event.get("error"):
             result["errors"].append(event["error"])
@@ -58,7 +58,8 @@ def summarize(events: list[dict]) -> dict:
             result["tools"] += [call["name"] for call in event.get("tool_calls", [])]
         elif event.get("type") == "tool" and event.get("tool") == "request_audio_upload":
             try:
-                result["upload_url"] = json.loads(event["text"]).get("upload_url")
+                handed_out = json.loads(event["text"])
+                result["upload_url"], result["audio_key"] = handed_out.get("upload_url"), handed_out.get("audio_key")
             except (ValueError, AttributeError):
                 pass
     return result

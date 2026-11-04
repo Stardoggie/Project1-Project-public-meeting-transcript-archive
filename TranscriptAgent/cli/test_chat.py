@@ -1,25 +1,95 @@
 """Offline tests for the CLI's parsing and checks; no agent or AWS needed."""
 import pytest
 
-from chat import MAX_BYTES, check_recording, parse_upload, plain, safe_filename
+from chat import MAX_BYTES, Chat, check_recording, find_recording, plain, safe_filename
 from client import summarize
 
 
-@pytest.mark.parametrize("rest, expected", [
-    ('"C:\\My Recordings\\hearing.mp3" Budget Hearing, Springfield', ("C:\\My Recordings\\hearing.mp3", "Budget Hearing, Springfield")),
-    ("'C:\\My Recordings\\hearing.mp3' Budget Hearing", ("C:\\My Recordings\\hearing.mp3", "Budget Hearing")),
-    ("& 'C:\\My Recordings\\hearing.mp3' Budget Hearing", ("C:\\My Recordings\\hearing.mp3", "Budget Hearing")),
-    ("C:\\rec\\hearing.wav Budget Hearing", ("C:\\rec\\hearing.wav", "Budget Hearing")),
-    ("hearing.mp3", ("hearing.mp3", "")),
-    ("", ("", "")),
-])
-def test_parse_upload(rest, expected):
-    assert parse_upload(rest) == expected
+@pytest.fixture
+def recordings(tmp_path, monkeypatch):
+    """A folder with a recording whose path has a space, and a bare one in the current folder."""
+    folder = tmp_path / "My Recordings"
+    folder.mkdir()
+    spaced = folder / "hearing one.mp3"
+    spaced.write_bytes(b"ID3")
+    (tmp_path / "Zidon1.mp3").write_bytes(b"ID3")
+    monkeypatch.chdir(tmp_path)
+    return str(spaced)
 
 
-def test_parse_upload_unclosed_quote():
-    with pytest.raises(ValueError):
-        parse_upload('"C:\\rec\\hearing.mp3 Budget Hearing')
+def test_find_quoted_and_dragged_paths(recordings):
+    assert find_recording(f'"{recordings}"') == (recordings, "")
+    assert find_recording(f'"{recordings}" Budget Hearing, Springfield') == (recordings, "Budget Hearing, Springfield")
+    assert find_recording(f"& '{recordings}'") == (recordings, "")
+    assert find_recording(f'upload "{recordings}" for the zoning meeting') == (recordings, "for the zoning meeting")
+
+
+def test_find_unquoted_paths_even_with_spaces(recordings):
+    assert find_recording(f"{recordings} Budget Hearing") == (recordings, "Budget Hearing")
+    assert find_recording(f"Add this to the Budget Hearing: {recordings}") == (recordings, "Add this to the Budget Hearing")
+    assert find_recording("Zidon1.mp3 is for the Peace Alliance meeting") == ("Zidon1.mp3", "is for the Peace Alliance meeting")
+
+
+def test_missing_paths_are_reported_but_plain_words_are_not(recordings):
+    assert find_recording("C:\\nope\\missing.mp3 Budget Hearing") == ("C:\\nope\\missing.mp3", "Budget Hearing")
+    assert find_recording('"C:\\docs\\notes.txt"') == ("C:\\docs\\notes.txt", "")
+    assert find_recording("Which meeting had the mp3 player discussion?") == (None, "Which meeting had the mp3 player discussion?")
+    assert find_recording("Tell me about notes.mp3") == (None, "Tell me about notes.mp3")
+    assert find_recording("What meetings are there?") == (None, "What meetings are there?")
+
+
+class FakeChat(Chat):
+    """Records what would be sent and uploaded instead of calling the agent and S3."""
+
+    def __init__(self, replies):
+        super().__init__("http://agent.invalid")
+        self.replies, self.sent, self.uploaded = list(replies), [], []
+
+    def send(self, payload):
+        self.sent.append(payload)
+        result = summarize(self.replies.pop(0))
+        if result["upload_url"]:
+            return self.finish_upload(result["upload_url"], result["audio_key"])
+        return result
+
+
+UPLOAD_EVENTS = [{"type": "tool", "tool": "request_audio_upload", "text": '{"upload_url": "https://s3/put", "audio_key": "audio/meeting-transcription-x.mp3"}'}]
+ATTACHED_EVENTS = [{"type": "ai", "text": "Attached and started transcription."}]
+
+
+def test_a_path_with_its_meeting_uploads_straight_away(recordings, monkeypatch):
+    chat = FakeChat([UPLOAD_EVENTS, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append((url, path)) or 200)
+    chat.handle(f'"{recordings}" Budget Hearing')
+    assert chat.uploaded == [("https://s3/put", recordings)]
+    assert "for this meeting: Budget Hearing" in chat.sent[0]["prompt"]
+    assert chat.sent[1]["prompt"].startswith("The upload is done")
+
+
+def test_a_path_alone_waits_for_the_agent_to_know_the_meeting(recordings, monkeypatch):
+    asks = [{"type": "ai", "text": "Which meeting is this recording for?"}]
+    chat = FakeChat([asks, UPLOAD_EVENTS, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append((url, path)) or 200)
+    chat.handle(f'"{recordings}"')
+    assert chat.uploaded == [] and "meeting we've been talking about" in chat.sent[0]["prompt"]
+    chat.handle("The Peace Alliance meeting")  # the agent now hands out the link; the file is still remembered
+    assert chat.uploaded == [("https://s3/put", recordings)]
+
+
+def test_agent_handing_out_a_link_asks_for_the_file_and_uploads_it(recordings, monkeypatch):
+    chat = FakeChat([UPLOAD_EVENTS, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append((url, path)) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: f"& '{recordings}'")
+    chat.handle("I want to add a recording to the Peace Alliance meeting")
+    assert chat.uploaded == [("https://s3/put", recordings)]
+
+
+def test_cancelling_the_file_prompt_uploads_nothing(monkeypatch):
+    chat = FakeChat([UPLOAD_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    chat.handle("I want to add a recording to the Peace Alliance meeting")
+    assert chat.uploaded == [] and len(chat.sent) == 1
 
 
 def test_check_recording(tmp_path):
@@ -56,3 +126,18 @@ def test_summarize_keeps_replies_and_transcripts_in_order():
     result = summarize(events)
     assert [kind for kind, _ in result["items"]] == ["transcript", "reply"]
     assert result["tools"] == ["show_full_transcript"] and result["confirmation"] == "Please confirm: delete meeting 1."
+
+
+def test_a_link_for_the_wrong_format_is_replaced_before_uploading(tmp_path, monkeypatch):
+    wav = tmp_path / "hearing.wav"
+    wav.write_bytes(b"RIFF")
+    guessed = [{"type": "tool", "tool": "request_audio_upload",
+                "text": '{"upload_url": "https://s3/put-mp3", "audio_key": "audio/meeting-transcription-a.mp3"}'}]
+    matching = [{"type": "tool", "tool": "request_audio_upload",
+                 "text": '{"upload_url": "https://s3/put-wav", "audio_key": "audio/meeting-transcription-b.wav"}'}]
+    chat = FakeChat([guessed, matching, ATTACHED_EVENTS])
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(url) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: str(wav))
+    chat.handle("I want to add a recording to the Peace Alliance meeting")
+    assert chat.uploaded == ["https://s3/put-wav"]
+    assert "hearing.wav" in chat.sent[1]["prompt"]
