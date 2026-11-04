@@ -10,7 +10,8 @@ from model.load import load_model
 from parse import parse_payload
 
 MEMORY_ID = os.getenv("MEMORY_AGENTMEMORY_ID")
-MAX_EVENT_CHARS = 2000
+# Tool results are only a peek at what a tool returned; the agent's own replies are never shortened
+MAX_TOOL_EVENT_CHARS = 2000
 
 
 def _make_checkpointer():
@@ -27,12 +28,21 @@ graph = build_graph(load_model(), _make_checkpointer())
 
 def _event(node: str, message) -> dict:
     """A compact, JSON-safe view of one message produced by a graph node."""
-    event = {"node": node, "type": message.type, "text": message.text[:MAX_EVENT_CHARS]}
+    text = message.text[:MAX_TOOL_EVENT_CHARS] if message.type == "tool" else message.text
+    event = {"node": node, "type": message.type, "text": text}
     if getattr(message, "tool_calls", None):
         event["tool_calls"] = [{"name": call["name"], "args": call["args"]} for call in message.tool_calls]
     if message.type == "tool":
         event["tool"] = message.name
     return event
+
+
+def _transcript_event(node: str, message) -> dict | None:
+    """The full transcript show_full_transcript attached for the user; the model never sees this text."""
+    artifact = getattr(message, "artifact", None)
+    if message.type == "tool" and message.name == "show_full_transcript" and isinstance(artifact, dict):
+        return {"node": node, "type": "transcript", **artifact}
+    return None
 
 
 def create_app():
@@ -81,6 +91,9 @@ def create_app():
                     continue
                 for message in (data or {}).get("messages", []):
                     yield _event(node, message)
+                    transcript = _transcript_event(node, message)
+                    if transcript:
+                        yield transcript
 
     return app
 

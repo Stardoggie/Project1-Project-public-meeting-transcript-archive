@@ -16,7 +16,9 @@ To add a recording: request_audio_upload, give the user the URL to PUT the file 
 then attach_uploaded_audio and start_transcription. Transcription takes minutes; use check_transcription when asked.
 When the user asks to delete something, call the delete tool directly: the app shows the user exactly what will be
 removed and asks them to confirm before it runs. If a tool result says the user did not confirm, nothing was changed.
-When quoting a transcript, name the meeting and date."""
+When the user wants to see or read a full transcript, call show_full_transcript: the app shows it to them word for
+word, so reply with a short note rather than repeating it. Use get_transcript only to read it yourself (to answer,
+quote or summarize). When quoting a transcript, name the meeting and date."""
 
 DELETE_TOOLS = {"delete_governing_body", "delete_meeting"}
 # Only a bare yes confirms; "yes, but only the first one" or "ok, what does that remove?" are new requests

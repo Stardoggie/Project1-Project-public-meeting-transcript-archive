@@ -204,13 +204,40 @@ def check_transcription(meeting_id: int) -> dict:
 
 @tool
 def get_transcript(meeting_id: int) -> dict:
-    """Get a meeting's full transcript text. Very long transcripts are truncated."""
+    """Read a meeting's transcript yourself, to answer questions about it, quote or summarize it.
+
+    Very long transcripts are truncated. When the user just wants to see the full transcript, use
+    show_full_transcript instead.
+    """
     text = _run(transcripts.get_transcript, meeting_id)
     if text is None:
         return {"error": "not_found", "detail": "No transcript for this meeting."}
     if isinstance(text, str) and len(text) > MAX_TRANSCRIPT_CHARS:
         return {"truncated": True, "transcript": text[:MAX_TRANSCRIPT_CHARS]}
     return text if isinstance(text, dict) else {"transcript": text}
+
+
+@tool(response_format="content_and_artifact")
+def show_full_transcript(meeting_id: int) -> tuple[str, dict | None]:
+    """Show the user a meeting's complete transcript, word for word.
+
+    Use this whenever the user wants to see, read or get the full transcript. The text goes straight to the user;
+    you only get a short note back, so don't repeat, retype or summarize it unless they ask.
+    """
+    meeting = _run(meetings.list_meeting, meeting_id)
+    if meeting is None:
+        return "Meeting not found.", None
+    if meeting.get("error"):
+        return f"Could not load the meeting: {meeting['detail']}", None
+    text = _run(transcripts.get_transcript, meeting_id)
+    if not isinstance(text, str):
+        return "This meeting has no transcript yet.", None
+    shown = {"meeting_id": meeting_id, "title": meeting["title"], "meeting_date": meeting["meeting_date"], "transcript": text}
+    note = (
+        f"The full transcript of '{meeting['title']}' ({meeting['meeting_date']}, {len(text):,} characters) "
+        "has been shown to the user directly. Don't repeat or summarize it unless they ask."
+    )
+    return note, shown
 
 
 @tool
@@ -229,5 +256,5 @@ TOOLS = [
     list_governing_bodies, get_governing_body, create_governing_body, update_governing_body, delete_governing_body,
     search_meetings, get_meeting, create_meeting, update_meeting, delete_meeting,
     request_audio_upload, attach_uploaded_audio, start_transcription, check_transcription,
-    get_transcript, get_trending_entities,
+    get_transcript, show_full_transcript, get_trending_entities,
 ]

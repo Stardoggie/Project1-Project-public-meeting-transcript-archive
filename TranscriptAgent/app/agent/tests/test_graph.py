@@ -214,3 +214,49 @@ def test_close_dangling_ignores_answered_calls():
     assert close_dangling_tool_calls([HumanMessage("x"), ai, answered, ToolMessage(content="{}", tool_call_id="b")]) == []
     assert close_dangling_tool_calls([HumanMessage("x"), AIMessage(content="done")]) == []
     assert close_dangling_tool_calls([]) == []
+
+
+def transcribed_meeting(text):
+    body = new_body()
+    meeting = t.create_meeting.invoke({"body_id": body["id"], "title": "Long Hearing", "meeting_date": "2026-11-10"})
+    with t._flask.app_context():
+        db.session.get(Meeting, meeting["id"]).transcript = text
+        db.session.commit()
+    return meeting["id"]
+
+
+def test_full_transcript_goes_to_the_user_not_the_model():
+    text = "Word " * 5000  # 25,000 characters, well past every cap
+    meeting_id = transcribed_meeting(text)
+    graph, model = make_graph(
+        AIMessage(content="", tool_calls=[call("show_full_transcript", {"meeting_id": meeting_id})]),
+        AIMessage(content="Here's the full transcript of Long Hearing."),
+    )
+    result, _ = run(graph, {"messages": [HumanMessage("show me the full transcript")]})
+    shown = [m for m in result["messages"] if isinstance(m, ToolMessage) and m.name == "show_full_transcript"][-1]
+    assert shown.artifact["transcript"] == text and shown.artifact["title"] == "Long Hearing"
+    assert "Word Word" not in shown.content and "shown to the user directly" in shown.content
+    # The model only ever saw the short note
+    assert all("Word Word" not in str(m.content) for m in model.seen[-1])
+
+
+def test_full_transcript_without_one_says_so():
+    body = new_body()
+    meeting = t.create_meeting.invoke({"body_id": body["id"], "title": "Untranscribed", "meeting_date": "2026-11-10"})
+    note, shown = t.show_full_transcript.func(meeting["id"])
+    assert shown is None and "no transcript" in note
+    note, shown = t.show_full_transcript.func(999999)
+    assert shown is None and note == "Meeting not found."
+
+
+def test_replies_are_not_shortened_but_tool_peeks_are():
+    import main
+
+    long_reply = "x" * 20_000
+    assert main._event("agent", AIMessage(content=long_reply))["text"] == long_reply
+    assert len(main._event("tools", ToolMessage(content="y" * 5000, name="get_meeting", tool_call_id="c"))["text"]) == 2000
+    shown = ToolMessage(content="note", name="show_full_transcript", tool_call_id="c",
+                        artifact={"meeting_id": 1, "title": "T", "meeting_date": "2026-11-10", "transcript": long_reply})
+    event = main._transcript_event("tools", shown)
+    assert event["type"] == "transcript" and event["transcript"] == long_reply
+    assert main._transcript_event("tools", ToolMessage(content="x", name="get_meeting", tool_call_id="c")) is None

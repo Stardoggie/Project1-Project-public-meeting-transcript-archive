@@ -43,6 +43,11 @@ Anything else cancels it; a reply other than a plain no is then handled as a new
 
 Each streamed event is a JSON object with `node` (`agent`, `tools` or `confirm`), `type` (`ai`, `tool` or
 `confirmation_required`) and `text`; `ai` events that call tools add `tool_calls`, and `tool` events add `tool`.
+`ai` text is the agent's full reply; `tool` text is only the first 2,000 characters of what a tool returned.
+
+When the user asks to see a full transcript, the `show_full_transcript` tool sends it straight to the caller as a
+`transcript` event (`meeting_id`, `title`, `meeting_date`, `transcript`). The model only gets a short note that it was
+shown, so it never reads or retypes the text.
 
 ## Environment Variables
 
