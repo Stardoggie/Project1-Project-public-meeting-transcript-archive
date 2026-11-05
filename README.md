@@ -9,7 +9,7 @@ topics with Amazon Comprehend. The agent is a LangGraph graph running on Amazon 
 
 ## Install
 ### Requirements
-- Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 20.12+, the AgentCore CLI (`npm install -g @aws/agentcore`)
+- Python 3.11+ (the deployed runtime uses 3.14), [uv](https://docs.astral.sh/uv/), Node.js 20.12+, the AgentCore CLI (`npm install -g @aws/agentcore`)
 - AWS credentials (an AWS CLI profile) with the permissions in `iam/policy.json`, and Bedrock access to `us.anthropic.claude-sonnet-5-5`
 - PostgreSQL 16+ (a local install, or `docker compose up -d db` in `public_meeting_transcript_archive/`)
 - An S3 bucket for recordings and transcripts
@@ -53,8 +53,6 @@ archive> C:\Recordings\hearing.mp3 Budget Hearing, Springfield City Council
 Other clients can send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "..."}` and the header
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation).
 
-A simple web chat page is shelved on the `web-ui` branch (`git checkout web-ui -- TranscriptAgent/ui` brings it back).
-
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
 - Agent graph: `pytest tests` in `TranscriptAgent/app/agent/`
@@ -62,7 +60,7 @@ A simple web chat page is shelved on the `web-ui` branch (`git checkout web-ui -
 Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
 
 ## Technology
-- Python 3.14
+- Python (3.14 in the AgentCore runtime)
 - Amazon Bedrock AgentCore (Runtime, Memory) and the AgentCore CLI 1.0
 - LangGraph and LangChain, with Claude Sonnet on Amazon Bedrock
 - Amazon Transcribe
@@ -75,47 +73,56 @@ Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against
 - pytest
 
 
-## Edge Case Decisions
-Asynchronous Transcription
+## Edge cases
+### Transcription runs in the background
+Transcribe doesn't finish right away. Starting transcription moves the meeting to `transcribing` and returns the job
+name; ask the agent to check on it (`check_transcription`) and, once the job is done, the transcript is stored and
+the meeting becomes `archived`.
 
-### Transcription Doesn't Complete Synchronously:
-  Transcribe is sent an audio file to work on. It returns a job key. The user asks the agent to check the transcription (check_transcription) to see if it is done.
+### Transcribe fails
+A failed job puts the meeting back to `recorded`, since the recording is still in S3, and the failure reason is
+returned. Starting transcription again deletes the failed job and retries the same recording. If a finished job's
+output has gone missing from S3, it is treated the same way.
 
-### Transcribe Failure
+### Comprehend fails
+The transcript is stored before Comprehend runs, and the meeting is only marked analyzed once Comprehend succeeds.
+If Comprehend fails, checking the transcription again retries the analysis until it works.
 
-  If a transcription fails, it is marked as recorded and will not be able to save as pending/failed. It is simple: just note that it failed and request the client to send another transcription attempt.
+### Long transcripts
+Comprehend has a size limit, so transcripts are split into chunks of up to 5,000 words and each chunk is analyzed
+separately.
 
-### Comprehend Failure
+### Unsupported or corrupted audio
+Only MP3 and WAV recordings are accepted. The agent hands out a one-hour presigned S3 upload link (the CLI uploads
+the file to it by itself), and other file types are refused before a link is made. Empty files and files over
+500 MB are refused when the upload is attached to a meeting. A corrupted file makes the Transcribe job fail, which is
+handled as a Transcribe failure.
 
-If Comprehend fails after a transcript has been created, just check the transcription again, and it will try again. This can be repeated until it is successful, marking it in the meeting table that the comprehending is completed.
+### No speech detected
+A finished job with an empty transcript is a valid result, not an error: it is stored as "No audio was detected." and
+produces no entities or key phrases.
 
-### Long Transcripts
+### Concurrent changes
+If a meeting or governing body is deleted while its transcription is running, the finished transcript is simply not
+stored. When two clerks edit the same meeting, the last save wins.
 
-Long transcripts are split into smaller chunks, with 5000 words per chunk. Each chunk is made up of up to 5000 words in a string and appended into a list of chunks
+### Deleting a governing body
+Deleting a governing body also deletes its meetings and their entities and key phrases. The recordings and transcript
+files in S3, and the Transcribe jobs, are kept.
 
-### Unsupported or Corrupted Audio
+### Confirmations
+The agent pauses and asks the user to confirm every delete, and replacing the recording of a meeting that already has
+a transcript, before it runs. Only a plain "yes" confirms.
 
-Only MP3 and WAV recordings are accepted. The agent gives out a one-hour presigned S3 URL to upload the file to with an HTTP PUT; other file types are refused before a URL is made. The maximum size is 500MB, checked when the uploaded file is attached to a meeting. A corrupted file makes the Transcribe job fail, which is handled as a Transcribe failure.
+### Replacing a recording
+Attaching new audio clears the meeting's transcript, entities and key phrases, so the new recording is transcribed and
+analyzed from scratch.
 
-### No Speech Detected
+### Editing after transcription
+Editing a meeting's title or date doesn't rerun Transcribe or Comprehend, because the transcript came from the stored
+recording.
 
-A completed transcription with a near-empty transcript is treated as a legitimate result rather than an application error. If it is empty, a note will be added to the transcript noting the lack of output. The transcript is stored, and no meaningful entities or key phrases are generated.
-
-### Concurrent Mutations
-
-The expected concurrent mutation is that if a governing body or meeting is deleted, then the transcription job will complete and not be stored. For two clerks editing, the last clerk will have the edit that will save, overwriting the older one.
-
-### Governing Body Deletion
-
-When a governing body is deleted, it deletes all of the meetings, entities, and key phrases underneath it. The agent pauses and asks the user to confirm every delete (and replacing a meeting's transcribed audio) before it runs.
-
-### Editing After Transcription
-
-Editing a meeting's title or meeting date does not retrigger transcription or Comprehend processing because the existing transcript was derived from the stored recording.
-## ERD,policy, and kanban board
-#### ERD
-doc/erd.png
-#### policy
-iam/policy.json
-#### kanban board
-https://github.com/users/Stardoggie/projects/1
+## ERD, policy and kanban board
+- ERD: `docs/ERD.png`
+- IAM policy: `iam/policy.json`
+- Kanban board: https://github.com/users/Stardoggie/projects/1
