@@ -5,7 +5,9 @@ library (Python 3.11+), so there is nothing to install.
 
 ## Run
 1. Start the agent: `agentcore dev` in `TranscriptAgent/`.
-2. In this folder: `python chat.py`
+2. In this folder: `python chat.py` (`python3 chat.py` on Linux and macOS)
+
+The example below uses a Windows path; on Linux and macOS it would be `~/Recordings/hearing.mp3`.
 
 ```
 archive> What meetings does Springfield City Council have?
@@ -36,7 +38,9 @@ archive> Delete the Budget Hearing meeting
 ```
 python chat.py "Which meetings talked about parking?"
 python chat.py --upload "C:\Recordings\hearing.mp3" --meeting "Budget Hearing, Springfield City Council"
+python3 chat.py --upload ~/Recordings/hearing.mp3 --meeting "Budget Hearing, Springfield City Council"
 ```
+The first upload line is for Windows, the second for Linux and macOS (`python3` there if `python` isn't found).
 Without `--meeting`, the agent may ask which meeting the recording is for; the chat then stays open so you can
 answer, and the file is uploaded once it knows.
 
