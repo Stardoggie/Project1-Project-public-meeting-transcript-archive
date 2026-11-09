@@ -66,6 +66,14 @@ def _rest(text: str, start: int, end: int) -> str:
     return re.sub(r"\s+", " ", rest).strip(" ,;:-.")
 
 
+def local_path(path: str) -> str:
+    """The path as this computer reads it, with ~ expanded. On Linux and macOS, a Windows-style path that doesn't
+    exist as typed (~\\Music\\hearing.mp3, .\\hearing.mp3) is tried with / instead, since \\ isn't a separator there."""
+    if os.sep == "/" and "\\" in path and not os.path.exists(os.path.expanduser(path)):
+        path = path.replace("\\", "/")
+    return os.path.expanduser(path)
+
+
 def find_recording(line: str) -> tuple[str | None, str]:
     """Find a file path in what the user typed; returns (path, rest of the message), or (None, line) if there's none.
 
@@ -79,7 +87,7 @@ def find_recording(line: str) -> tuple[str | None, str]:
         dragged = DRAGGED.match(text)
         if dragged:
             candidate = dragged.group(1).replace("''", "'").strip()
-            if os.path.isfile(os.path.expanduser(candidate)) or _looks_like_path(candidate):
+            if os.path.isfile(local_path(candidate)) or _looks_like_path(candidate):
                 return candidate, _rest(text, dragged.start(), dragged.end())
     # Try a quote at every position, so an apostrophe (Here's, mayor's) can't hide or swallow a quoted path; one
     # straight after a letter or digit is an apostrophe, not an opening quote
@@ -90,10 +98,10 @@ def find_recording(line: str) -> tuple[str | None, str]:
         # Later closing quotes too, outermost first, so an apostrophe inside ('C:\Recs\Bob's.mp3') can't cut a file short
         for close in reversed([i for i in range(match.end(), len(text)) if text[i] == text[pos]]):
             candidate = text[pos + 1:close].strip()
-            if os.path.isfile(os.path.expanduser(candidate)):
+            if os.path.isfile(local_path(candidate)):
                 return candidate, _rest(text, pos, close + 1)
         candidate = match.group(2).strip()
-        if os.path.isfile(os.path.expanduser(candidate)) or WHOLE_PATH.fullmatch(candidate):
+        if os.path.isfile(local_path(candidate)) or WHOLE_PATH.fullmatch(candidate):
             return candidate, _rest(text, match.start(), match.end())
     for end_match in AUDIO_END.finditer(text):
         end = end_match.end()
@@ -101,7 +109,7 @@ def find_recording(line: str) -> tuple[str | None, str]:
         word_starts = [m.start() for m in re.finditer(r"(?<!\S)\S", text[:end])]  # a bare name can have spaces too
         # Earliest start first, so an unquoted path or file name with spaces is matched whole
         for start in sorted(set(starts + word_starts)):
-            if os.path.isfile(os.path.expanduser(text[start:end])):
+            if os.path.isfile(local_path(text[start:end])):
                 return text[start:end], _rest(text, start, end)
         if starts:
             start = starts[-1]
@@ -193,7 +201,7 @@ class Chat:
                 print("  Not uploaded.")
                 return None
             found, _ = find_recording(answer)
-            path = os.path.expanduser(found or answer.strip("\"'"))
+            path = local_path(found or answer.strip("\"'"))
             problem = check_recording(path)
             if problem:
                 print(f"  {problem}")
@@ -218,7 +226,7 @@ class Chat:
         return self.send({"prompt": "The upload is done. Attach it to that meeting and start transcription."})
 
     def upload(self, path: str, meeting: str):
-        path = os.path.expanduser(path)  # ~\Music\hearing.mp3, typed or from --upload
+        path = local_path(path)  # ~\Music\hearing.mp3, typed or from --upload
         problem = check_recording(path)
         if problem:
             print(f"  {problem}")
