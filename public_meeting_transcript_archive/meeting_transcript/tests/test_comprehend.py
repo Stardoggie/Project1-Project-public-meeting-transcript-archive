@@ -41,7 +41,7 @@ def test_comprehend_entities_and_phrases(monkeypatch):
 
     captured = {}
 
-    def fake_add_entities_and_phrases(key_phrases, entities, meeting_id):
+    def fake_add_entities_and_phrases(key_phrases, entities, meeting_id, job_key=None):
         captured["key_phrases"] = key_phrases
         captured["entities"] = entities
         captured["meeting_id"] = meeting_id
@@ -83,7 +83,7 @@ def test_comprehend_skips_entities_over_150_chars(monkeypatch):
     captured = {}
     monkeypatch.setattr(
         "meeting_transcript.analysis.service.add_entities_and_phrases",
-        lambda key_phrases, entities, meeting_id: captured.update(entities=entities)
+        lambda key_phrases, entities, meeting_id, job_key=None: captured.update(entities=entities)
     )
 
     comprehend_entities_and_phrases("Jane Doe spoke.", 1)

@@ -49,16 +49,24 @@ def read_message(prompt: str) -> str:
         return lines[0]
     time.sleep(PASTE_SETTLE_SECONDS)
     while _waiting():
-        lines.append(input())
+        try:
+            lines.append(input())
+        except EOFError:  # the paste ended the input; send what arrived
+            break
         time.sleep(PASTE_SETTLE_SECONDS)
     return "\n".join(lines)
 
 
 def ask(prompt: str) -> str:
-    """A question that must be answered by the user now, not by text typed or pasted before it appeared."""
+    """A question that must be answered by the user now, not by text typed or pasted before it appeared.
+    The end of input (Ctrl+D, or a closed or redirected stdin) answers "", which every prompt takes as no or cancel."""
     if _interactive():
         try:
             _discard()
         except (OSError, ValueError):
             pass
-    return input(prompt)
+    try:
+        return input(prompt)
+    except EOFError:
+        print()
+        return ""

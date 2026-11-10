@@ -64,6 +64,8 @@ def delete_body(body_id:int)->bool:
     """
         deletes a governing body of a given id
     """
+    #lock its meetings first, so analysis results being stored land before the cascade loads what to delete
+    db.session.execute(select(Meeting.id).where(Meeting.body_id == body_id).with_for_update())
     record = db.session.get(GoverningBody,body_id)
     if record is None:
         return False

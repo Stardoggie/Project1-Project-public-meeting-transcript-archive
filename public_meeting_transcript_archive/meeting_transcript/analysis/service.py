@@ -3,9 +3,10 @@ from meeting_transcript.analysis.store import split_transcripton_chunk,add_entit
 from collections import Counter
 
 
-def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99)->None:
+def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99,job_key:str|None=None)->None:
     """
         gets entities and key phrases from comprehend using chunks of transcript
+        with a job key, the results are only stored if the meeting still has that job's transcript
     """
 
     entity_counts = {}
@@ -53,7 +54,7 @@ def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99)->Non
             if len(text) < 5:
                 continue
             key_phrase.add(text)
-    add_entities_and_phrases(key_phrase,entity_counts,meeting_id)
+    add_entities_and_phrases(key_phrase,entity_counts,meeting_id,job_key)
 
 
 

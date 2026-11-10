@@ -6,10 +6,11 @@ from meeting_transcript.analysis.models import entityDTO,phraseDTO
 
 Status= Literal["scheduled","recorded","transcribing","archived"]
 
+#the read models don't re-check the title length, so a row written before the rule (or by hand) can still be read
 class Meetings(BaseModel):
     model_config = ConfigDict(from_attributes=True,extra="forbid")
     id: int
-    title: str = Field(max_length=60)
+    title: str
     status: Status = "scheduled"
 
 class CreateMeetingsDTO(BaseModel):
@@ -22,7 +23,7 @@ class CreateMeetingsDTO(BaseModel):
 class ListMeetingsDTO(BaseModel):
     model_config = ConfigDict(extra="forbid",from_attributes=True)
     id: int
-    title: str = Field(max_length=60)
+    title: str
     status: Status = "scheduled"
     meeting_date : date
     transcript_available: bool

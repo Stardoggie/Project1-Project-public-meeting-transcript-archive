@@ -53,7 +53,8 @@ archive> ~/Recordings/hearing.mp3 Budget Hearing, Springfield City Council      
 ```
 On Linux and macOS, use `python3` if `python` isn't found.
 Other clients can send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "..."}` and the header
-`X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation).
+`X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation; a request without it
+starts a new conversation of its own).
 
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`

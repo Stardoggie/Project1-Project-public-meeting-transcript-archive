@@ -1,11 +1,15 @@
+import asyncio
+import logging
 import os
+import uuid
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from graph import build_graph, close_dangling_tool_calls
+from graph import AgentContext, build_graph, close_dangling_tool_calls
+from memory import make_long_term_memory
 from model.load import load_model
 from parse import parse_payload
 
@@ -26,6 +30,10 @@ def _make_checkpointer():
 
 
 graph = build_graph(load_model(), _make_checkpointer())
+long_term_memory = make_long_term_memory(MEMORY_ID)
+# Recording a turn in long-term memory runs after the response, so keep the tasks until they finish
+_pending_records: set[asyncio.Task] = set()
+log = logging.getLogger("bedrock_agentcore.app")  # the AgentCore app's own logger
 
 
 def _event(node: str, message) -> dict:
@@ -48,55 +56,108 @@ def _transcript_event(node: str, message) -> dict | None:
     return None
 
 
+def _session_id(context) -> str:
+    """The AgentCore session id; a request without one gets a fresh id, so header-less callers never share a
+    conversation (or answer each other's confirmations)."""
+    return getattr(context, "session_id", None) or f"local-{uuid.uuid4().hex}"
+
+
+async def handle_request(payload, context, graph=graph, memory=long_term_memory):
+    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards."""
+    session_id = _session_id(context)
+    try:
+        async for event in run_turn(payload, session_id, graph=graph, memory=memory):
+            yield event
+    finally:
+        if not getattr(context, "session_id", None):
+            try:
+                await graph.checkpointer.adelete_thread(session_id)
+            except Exception:
+                log.warning("Couldn't drop the one-off session %s", session_id, exc_info=True)
+
+
+def _record_later(memory, actor_id: str, session_id: str, messages: list) -> None:
+    if memory and messages:
+        task = asyncio.create_task(memory.record(actor_id, session_id, messages))
+        _pending_records.add(task)
+        task.add_done_callback(_pending_records.discard)
+
+
+async def run_turn(payload, session_id: str, graph=graph, memory=long_term_memory):
+    """Stream the events of one request in a session; memory is None when long-term memory is off."""
+    try:
+        prompt, actor_id = parse_payload(payload)
+    except ValueError as e:
+        yield {"error": str(e)}
+        return
+
+    log.info(f"Invoking with session_id={session_id} and actor_id={actor_id}")
+    config = {"configurable": {"thread_id": session_id, "actor_id": actor_id}, "recursion_limit": 50}
+
+    state = await graph.aget_state(config)
+    turn = []  # what this request adds to the conversation, for long-term memory
+    if state.interrupts:
+        # A paused confirmation takes an explicit "confirm": true/false, or this message, as its answer
+        answer = payload.get("confirm", prompt)
+        if answer is None or (isinstance(answer, str) and not answer.strip()):
+            yield {"error": "a confirmation is waiting; send 'confirm' (true/false) or a 'prompt' reply"}
+            return
+        graph_input = Command(resume=answer)
+    else:
+        if not prompt.strip():
+            if "confirm" in payload:
+                yield {"error": "there is no confirmation waiting in this session"}
+            else:
+                yield {"error": "payload must be a JSON object with a non-empty string 'prompt'"}
+            return
+        # Close tool calls a cut-off request left unanswered, or Bedrock rejects the history from now on
+        dangling = close_dangling_tool_calls(state.values.get("messages", []))
+        graph_input = {"messages": [*dangling, HumanMessage(prompt)]}
+        turn.append(HumanMessage(prompt))
+
+    try:
+        async for event in _stream(graph, graph_input, config, memory, actor_id, session_id, turn):
+            yield event
+    finally:
+        # Also when the client cut the stream off: record what this turn got as far as
+        _record_later(memory, actor_id, session_id, turn)
+
+
+async def _stream(graph, graph_input, config, memory, actor_id: str, session_id: str, turn: list):
+    """The graph's events for one request, with remembered background; adds the agent's messages to turn."""
+    remembered = ""
+    if memory and turn:  # a new message, not the answer to a confirmation
+        try:
+            remembered = await memory.recall(actor_id, session_id, turn[0].text)
+        except Exception:
+            log.warning("Couldn't recall long-term memory", exc_info=True)
+
+    async for update in graph.astream(graph_input, config, stream_mode="updates", context=AgentContext(memory=remembered)):
+        for node, data in update.items():
+            if node == "__interrupt__":
+                for item in data:
+                    yield {"node": "confirm", "type": "confirmation_required", **item.value}
+                continue
+            for message in (data or {}).get("messages", []):
+                if message.type == "ai":
+                    turn.append(message)
+                yield _event(node, message)
+                transcript = _transcript_event(node, message)
+                if transcript:
+                    yield transcript
+
+
 def create_app():
     app = BedrockAgentCoreApp()
-    log = app.logger
+    if logging.getLogger().handlers:
+        # The root logger already prints (OpenTelemetry's handler when deployed), so the app's own handler would
+        # print every line twice
+        app.logger.handlers.clear()
 
     @app.entrypoint
     async def invoke(payload, context):
-        session_id = getattr(context, "session_id", None) or "default-session"
-        try:
-            prompt, actor_id = parse_payload(payload)
-        except ValueError as e:
-            yield {"error": str(e)}
-            return
-        if not isinstance(prompt, str):
-            yield {"error": "send a 'prompt' string; the conversation history is kept per session"}
-            return
-
-        log.info(f"Invoking with session_id={session_id} and actor_id={actor_id}")
-        config = {"configurable": {"thread_id": session_id, "actor_id": actor_id}, "recursion_limit": 50}
-
-        state = await graph.aget_state(config)
-        if state.interrupts:
-            # A paused confirmation takes an explicit "confirm": true/false, or this message, as its answer
-            answer = payload.get("confirm", prompt)
-            if answer is None or (isinstance(answer, str) and not answer.strip()):
-                yield {"error": "a confirmation is waiting; send 'confirm' (true/false) or a 'prompt' reply"}
-                return
-            graph_input = Command(resume=answer)
-        else:
-            if not prompt.strip():
-                if "confirm" in payload:
-                    yield {"error": "there is no confirmation waiting in this session"}
-                else:
-                    yield {"error": "payload must be a JSON object with a non-empty string 'prompt'"}
-                return
-            # Close tool calls a cut-off request left unanswered, or Bedrock rejects the history from now on
-            dangling = close_dangling_tool_calls(state.values.get("messages", []))
-            graph_input = {"messages": [*dangling, HumanMessage(prompt)]}
-
-        async for update in graph.astream(graph_input, config, stream_mode="updates"):
-            for node, data in update.items():
-                if node == "__interrupt__":
-                    for item in data:
-                        yield {"node": "confirm", "type": "confirmation_required", **item.value}
-                    continue
-                for message in (data or {}).get("messages", []):
-                    yield _event(node, message)
-                    transcript = _transcript_event(node, message)
-                    if transcript:
-                        yield transcript
+        async for event in handle_request(payload, context):
+            yield event
 
     return app
 

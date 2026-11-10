@@ -85,7 +85,8 @@ def edit_meeting(meeting_id:int, meeting:dict)->Meetings|None:
 
 
 def delete_meeting(meeting_id:int)->bool:
-    record = db.session.get(Meeting,meeting_id)
+    #lock first, so analysis results being stored land before the cascade loads the entities to delete
+    record = db.session.get(Meeting,meeting_id,with_for_update=True,populate_existing=True)
     if record is None:
         return False
     db.session.delete(record)

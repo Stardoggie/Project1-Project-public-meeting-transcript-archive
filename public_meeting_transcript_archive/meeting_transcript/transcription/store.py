@@ -2,8 +2,13 @@ from meeting_transcript.meetings.models import ListMeetingsDTO,Meetings,CreateMe
 from pydantic import ValidationError
 from meeting_transcript.extensions import db
 from meeting_transcript.meetings.models_db import Meeting
+from sqlalchemy import update,func
+from datetime import timedelta
 import logging
 logger = logging.getLogger(__name__)
+#a claimed analysis older than this is taken to be abandoned (its process died); comprehend normally takes seconds,
+#and even a long meeting with throttling retries takes a few minutes
+ANALYSIS_CLAIM_TIMEOUT = timedelta(minutes=15)
 
 def _reset_analysis(record:Meeting)->None:
     """
@@ -12,6 +17,7 @@ def _reset_analysis(record:Meeting)->None:
     record.transcript = None
     record.transcribe_job_name = None
     record.analysis_completed = False
+    record.analysis_claimed_at = None
     #delete-orphan cascade removes the old rows
     record.entities.clear()
     record.keys.clear()
@@ -21,10 +27,12 @@ def attach_audio(audio_key:str,meeting_id:int,body_id:int)->dict |None:
         stores the key of audio already uploaded straight to s3 and marks the meeting recorded
         any earlier transcript and analysis are cleared
     """
-    record = db.session.get(Meeting,meeting_id)
+    #lock the row so a transcript or analysis being stored for the old audio finishes first, then is cleared
+    record = db.session.get(Meeting,meeting_id,with_for_update=True,populate_existing=True)
     if record is None:
         return None
     if record.body_id != body_id:
+        db.session.rollback()
         return {"out":"out_of_bounds"}
     _reset_analysis(record)
     record.audio_object_key = audio_key
@@ -52,13 +60,18 @@ def get_audio_key(meeting_id:int)->str:
     audio_key = record.audio_object_key
     return audio_key
 
-def store_transcription(meeting_id:int,transcription:str)-> str|None:
+def store_transcription(meeting_id:int,transcription:str,job_key:str)-> str|bool|None:
     """
         stores whole transcript in db and returns the text that was stored, None if the meeting is gone
+        False if job_key is no longer the meeting's job (its audio was replaced), so nothing is stored
     """
-    record  = db.session.get(Meeting,meeting_id)
+    #lock the row so re-attaching audio can't land between the job check and the write
+    record = db.session.get(Meeting,meeting_id,with_for_update=True,populate_existing=True)
     if record is None:
         return None
+    if record.transcribe_job_name != job_key:
+        db.session.rollback()
+        return False
     if len(transcription) < 1:
         transcription = "No audio was detected."
     record.transcript = transcription
@@ -114,17 +127,44 @@ def already_transcribed(meeting_id:int,job_key:str)->bool:
     record = db.session.get(Meeting,meeting_id)
     return record is not None and record.transcript is not None and record.transcribe_job_name == job_key
 
-def analysis_check(meeting_id:int)->bool|None:
+def claim_analysis(meeting_id:int,job_key:str)->str|None:
     """
-        whether the meeting was analyzed, None if the meeting is gone
+        claims the analysis of the transcript from this job, None if the meeting is gone, otherwise
+        "claimed": this caller analyses it, "done": already analysed, "running": another check claimed it recently,
+        "superseded": the meeting has a different job now
+        the claim is a committed timestamp, so no lock is held while comprehend runs, and a claim left by a process
+        that died is taken again once it's older than ANALYSIS_CLAIM_TIMEOUT
     """
-    record = db.session.get(Meeting,meeting_id)
+    claimed = db.session.execute(
+        update(Meeting)
+        .where(
+            Meeting.id == meeting_id,
+            Meeting.transcribe_job_name == job_key,
+            Meeting.analysis_completed.is_not(True),
+            Meeting.analysis_claimed_at.is_(None) | (Meeting.analysis_claimed_at < func.now() - ANALYSIS_CLAIM_TIMEOUT),
+        )
+        .values(analysis_claimed_at=func.now())
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    db.session.commit()
+    if claimed:
+        return "claimed"
+    record = db.session.get(Meeting,meeting_id,populate_existing=True)
     if record is None:
         return None
-    analysis = record.analysis_completed
-    new_analysis = analysis
+    if record.transcribe_job_name != job_key:
+        return "superseded"
+    return "done" if record.analysis_completed else "running"
+
+def release_analysis(meeting_id:int,job_key:str)->None:
+    """
+        gives up a claim after a failed analysis so the next status check tries again
+    """
+    db.session.rollback()
+    db.session.execute(
+        update(Meeting)
+        .where(Meeting.id == meeting_id,Meeting.transcribe_job_name == job_key,Meeting.analysis_completed.is_not(True))
+        .values(analysis_claimed_at=None)
+        .execution_options(synchronize_session=False)
+    )
     db.session.commit()
-    return new_analysis
-
-
-

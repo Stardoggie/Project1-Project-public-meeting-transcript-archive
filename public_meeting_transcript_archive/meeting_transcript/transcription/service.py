@@ -2,7 +2,7 @@ import json
 import uuid
 from meeting_transcript.config import BUCKET_NAME
 from botocore.exceptions import ClientError
-from meeting_transcript.transcription.store import get_audio_key,store_transcription,store_job_key,get_job_key,analysis_check,revert_transcribe_failure,meeting_exists,meeting_not_found,already_transcribed
+from meeting_transcript.transcription.store import get_audio_key,store_transcription,store_job_key,get_job_key,claim_analysis,release_analysis,revert_transcribe_failure,meeting_exists,meeting_not_found,already_transcribed
 from meeting_transcript.aws.aws import get_transcribe_client,get_s3_client
 from meeting_transcript.aws.s3client import get_object
 from meeting_transcript.analysis.service import comprehend_entities_and_phrases
@@ -116,16 +116,32 @@ def get_transcription_job(meeting_id:int)->dict:
         payload = json.loads(response["Body"].read())
         transcript = payload["results"]["transcripts"][0]["transcript"]
         #return what was stored, silent audio is stored as a placeholder message
-        stored = store_transcription(meeting_id,transcript)
+        stored = store_transcription(meeting_id,transcript,job_name)
         #the meeting can be deleted while the transcript downloads
         if stored is None:
             return meeting_not_found()
+        #or its audio replaced, and this transcript belongs to the old recording
+        if stored is False:
+            return {"job_name":job_name,"status":"SUPERSEDED","detail":"The meeting's recording was replaced while this transcript downloaded, so it was discarded. Start or check transcription for the new recording."}
         result["transcript"] = stored
-        analysed = analysis_check(meeting_id)
-        if analysed is None:
+        #only the caller that claims it analyses; comprehend runs unlocked and the results are only stored
+        #if the meeting still has this job's transcript
+        claimed = claim_analysis(meeting_id,job_name)
+        if claimed is None:
             return meeting_not_found()
-        if analysed is False:
-            comprehend_entities_and_phrases(transcript,meeting_id)
+        if claimed == "superseded":
+            return {"job_name":job_name,"status":"SUPERSEDED","detail":"The meeting's recording was replaced, so this transcript was discarded. Start or check transcription for the new recording."}
+        if claimed == "running":
+            #completed is only reported once the entities and key phrases are stored
+            result["status"] = "ANALYZING"
+            result["detail"] = "The transcript is stored; entity and key-phrase analysis is still running. Check again shortly."
+        if claimed == "claimed":
+            try:
+                comprehend_entities_and_phrases(transcript,meeting_id,job_key=job_name)
+            except Exception:
+                #leave it unanalysed so the next check tries again
+                release_analysis(meeting_id,job_name)
+                raise
 
     elif status == "FAILED":
         result["failure_reason"] = job.get("FailureReason","unknown")

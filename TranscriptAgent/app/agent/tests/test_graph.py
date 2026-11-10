@@ -80,7 +80,7 @@ def test_delete_pauses_until_yes_then_runs_confirmed():
     )
     _, state = run(graph, {"messages": [HumanMessage("delete it")]})
     assert state.interrupts and state.next == ("confirm",)
-    assert f"delete governing body {body['id']}" in state.interrupts[0].value["question"]
+    assert f'delete governing body "Graph Test Council" (id {body["id"]}), which has no meetings.' in state.interrupts[0].value["question"]
     assert body_exists(body["id"])  # nothing runs while paused
 
     result, state = run(graph, Command(resume="yes"))
@@ -156,12 +156,13 @@ def test_replacing_audio_needs_confirmation_only_when_a_transcript_exists():
     assert needs_confirmation(call("get_meeting", {"meeting_id": meeting["id"]})) is False
 
 
-def test_only_a_bare_yes_confirms():
-    for reply in ["yes", "Yes!", "y", "ok", "OK.", "sure", "yes please", "confirm", "go ahead", True]:
+def test_only_a_plain_yes_confirms():
+    for reply in ["yes", "YES", "Yes!", "yes.", "  yes  ", True]:
         assert is_yes(reply), reply
     for reply in [
-        "Yes, but only the first one", "ok, what exactly does that remove?", "sure? wait no",
-        "yes delete meeting 6 instead", "Do it later", "no", "", None, 1, "false", False,
+        "y", "ok", "OK.", "okay", "sure", "do it", "go ahead", "confirm", "confirmed", "proceed", "yeah", "yep",
+        "yes please", "Yes, but only the first one", "ok, what exactly does that remove?", "sure? wait no",
+        "yes delete meeting 6 instead", "Do it later", "yes?", "no", "", None, 1, "false", False,
     ]:
         assert not is_yes(reply), reply
 
@@ -268,3 +269,173 @@ def test_upload_links_are_never_trimmed():
     link = '{"upload_url": "https://s3/' + "x" * 3000 + '", "audio_key": "audio/k.mp3", "method": "PUT"}'
     event = main._event("tools", ToolMessage(content=link, name="request_audio_upload", tool_call_id="c"))
     assert event["text"] == link
+
+
+def test_deleting_a_missing_id_says_not_found_without_asking():
+    for name, args in [("delete_governing_body", {"body_id": 999999}), ("delete_meeting", {"meeting_id": 999999})]:
+        assert needs_confirmation(call(name, args)) is False
+        graph, _ = make_graph(AIMessage(content="", tool_calls=[call(name, args)]), AIMessage(content="Not found."))
+        result, state = run(graph, {"messages": [HumanMessage("delete it")]}, thread=name)
+        tool_message = [m for m in result["messages"] if isinstance(m, ToolMessage)][-1]
+        assert not state.interrupts and '"not_found"' in tool_message.content
+
+
+def test_search_and_trending_on_a_missing_body_are_not_found():
+    assert t.search_meetings.invoke({"body_id": 999999})["error"] == "not_found"
+    assert t.search_meetings.invoke({"body_id": 999999, "key_phrase": "budget"})["error"] == "not_found"
+    assert t.get_trending_entities.invoke({"body_id": 999999})["error"] == "not_found"
+    body = new_body()
+    assert t.search_meetings.invoke({"body_id": body["id"]}) == []
+
+
+def test_confirmation_names_what_goes_and_the_result_says_what_went():
+    body = new_body()
+    first = t.create_meeting.invoke({"body_id": body["id"], "title": "Budget Hearing", "meeting_date": "2026-10-20"})
+    t.create_meeting.invoke({"body_id": body["id"], "title": "Zoning Review", "meeting_date": "2026-10-27"})
+    graph, _ = make_graph(
+        AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": first["id"]})]),
+        AIMessage(content="Deleted."),
+    )
+    _, state = run(graph, {"messages": [HumanMessage("delete the budget hearing")]})
+    question = state.interrupts[0].value["question"]
+    assert f'delete meeting "Budget Hearing" on 2026-10-20 (Graph Test Council, id {first["id"]})' in question
+
+    graph, _ = make_graph(
+        AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]),
+        AIMessage(content="Deleted."),
+    )
+    _, state = run(graph, {"messages": [HumanMessage("delete the council")]}, thread="t2")
+    assert "and its 2 meetings" in state.interrupts[0].value["question"]
+    result, _ = run(graph, Command(resume="yes"), thread="t2")
+    deleted = [m for m in result["messages"] if isinstance(m, ToolMessage)][-1].content
+    assert '"name": "Graph Test Council"' in deleted and "Budget Hearing" in deleted and "Zoning Review" in deleted
+
+
+def test_database_errors_reach_the_model_without_sql():
+    result = t.create_meeting.invoke({"body_id": 999999, "title": "Orphan", "meeting_date": "2026-10-20"})
+    assert result == {"error": "database_error", "detail": "A referenced record doesn't exist."}
+    # the app's own validation messages still come through
+    assert "meeting_date" in t.create_meeting.invoke({"body_id": 1, "title": "Bad", "meeting_date": "soon"})["detail"]
+
+
+def test_requests_without_a_session_id_never_share_one():
+    import main
+
+    class Context:
+        session_id = None
+
+    first, second = main._session_id(Context()), main._session_id(None)
+    assert first != second and first.startswith("local-")
+    Context.session_id = "cli-abc"
+    assert main._session_id(Context()) == "cli-abc"
+
+
+def test_a_messages_payload_is_told_to_send_a_prompt():
+    from parse import parse_payload
+    import pytest
+
+    with pytest.raises(ValueError, match="send a 'prompt' string"):
+        parse_payload({"messages": []})
+    assert parse_payload({"prompt": "hi", "actorId": ""}) == ("hi", "default")
+
+
+def test_a_string_id_with_confirmed_set_still_asks_first():
+    body = new_body()
+    t.create_meeting.invoke({"body_id": body["id"], "title": "Kept", "meeting_date": "2026-10-20"})
+    graph, _ = make_graph(
+        AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": str(body["id"]), "confirmed": True})]),
+        AIMessage(content="unused"),
+    )
+    _, state = run(graph, {"messages": [HumanMessage("delete it")]})
+    assert state.interrupts and body_exists(body["id"])
+    assert "and its 1 meeting," in state.interrupts[0].value["question"]
+
+
+def test_a_failed_lookup_still_asks_first(monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    body = new_body()
+    meeting = t.create_meeting.invoke({"body_id": body["id"], "title": "Kept", "meeting_date": "2026-10-20"})
+
+    def down(record_id):
+        raise OperationalError("SELECT 1", {}, Exception("connection lost"))
+    monkeypatch.setattr(t, "_body_summary", down)
+    monkeypatch.setattr(t, "_meeting_summary", down)
+    monkeypatch.setattr(t.meetings, "list_meeting", down)
+    assert needs_confirmation(call("delete_governing_body", {"body_id": body["id"]})) is True
+    assert needs_confirmation(call("delete_meeting", {"meeting_id": meeting["id"]})) is True
+    attach = call("attach_uploaded_audio", {"body_id": body["id"], "meeting_id": meeting["id"], "audio_key": "x"})
+    assert needs_confirmation(attach) is True
+    graph, _ = make_graph(AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]))
+    _, state = run(graph, {"messages": [HumanMessage("delete it")]})
+    assert "couldn't be read" in state.interrupts[0].value["question"]
+    monkeypatch.undo()
+    assert body_exists(body["id"])
+
+
+def test_the_model_can_never_run_a_delete_itself():
+    body = new_body()
+    meeting = t.create_meeting.invoke({"body_id": body["id"], "title": "Kept", "meeting_date": "2026-10-20"})
+    assert "confirmed" not in t.delete_governing_body.args and "confirmed" not in t.delete_meeting.args
+    for tool, args in [(t.delete_meeting, {"meeting_id": meeting["id"]}), (t.delete_governing_body, {"body_id": body["id"]})]:
+        result = tool.invoke({**args, "confirmed": True})
+        assert result == t.DELETE_NOT_RUN and "ask" not in result["detail"].lower()
+    assert body_exists(body["id"]) and t.get_meeting.invoke({"meeting_id": meeting["id"]}).get("error") is None
+    # a yes typed in chat is just a new message: only the app's own prompt runs a delete
+    graph, model = make_graph(
+        AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": meeting["id"]})]),
+        AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": meeting["id"]}, "call-2")]),
+        AIMessage(content="unused"),
+    )
+    run(graph, {"messages": [HumanMessage("delete it")]})
+    _, state = run(graph, Command(resume="ok, go"))
+    assert state.interrupts and t.get_meeting.invoke({"meeting_id": meeting["id"]}).get("error") is None
+
+
+def test_malformed_and_out_of_range_ids_never_delete():
+    for value in ["abc", -1, 0, True, None, 1.5]:
+        assert t.as_id(value) is None, value
+    assert t.as_id(" 12 ") == 12 and t.as_id(12) == 12
+    assert t.lookup_body(2**40) == ("missing", None)
+    assert t.delete_body_confirmed("abc")["error"] == "invalid_id"
+    assert t.delete_meeting_confirmed(2**40)["error"] == "not_found"
+
+
+def test_a_delete_that_loses_a_race_is_explained():
+    from sqlalchemy.exc import IntegrityError
+
+    class Orig(Exception):
+        sqlstate = t.FOREIGN_KEY_VIOLATION
+    deleting = IntegrityError("DELETE", {}, Orig('update or delete on table "meetings" violates foreign key constraint'))
+    inserting = IntegrityError("INSERT", {}, Orig('insert or update on table "meetings" violates foreign key constraint'))
+    assert "while it was being deleted" in t._database_error(deleting)
+    assert t._database_error(inserting) == "A referenced record doesn't exist."
+
+
+def test_non_ascii_digits_are_invalid_and_never_break_the_turn():
+    import asyncio as aio
+    from graph import route_after_agent
+
+    for value in ["²", "١٢", "1e3", "8.0", " "]:
+        assert t.as_id(value) is None, value
+    assert t.lookup_body("²") == ("invalid", None)
+    message = AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": "²"})])
+    assert aio.run(route_after_agent({"messages": [message]})) == "tools"
+    assert t.delete_governing_body.invoke({"body_id": "²"})["error"] == "invalid_id"
+
+
+def test_float_ids_get_a_clear_invalid_id_from_the_delete_tools():
+    body = new_body()
+    meeting = t.create_meeting.invoke({"body_id": body["id"], "title": "Kept", "meeting_date": "2026-10-20"})
+    assert t.delete_meeting.args["meeting_id"]["type"] == "integer"  # still an integer to the model
+    for tool, args in [(t.delete_governing_body, {"body_id": float(body["id"])}),
+                       (t.delete_meeting, {"meeting_id": float(meeting["id"])})]:
+        result = tool.invoke(args)
+        assert result["error"] == "invalid_id" and "whole numbers" in result["detail"]
+    graph, _ = make_graph(
+        AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": float(meeting["id"])})]),
+        AIMessage(content="That id isn't valid."),
+    )
+    result, state = run(graph, {"messages": [HumanMessage("delete it")]})
+    assert not state.interrupts and '"invalid_id"' in [m for m in result["messages"] if isinstance(m, ToolMessage)][-1].content
+    assert t.get_meeting.invoke({"meeting_id": meeting["id"]}).get("error") is None

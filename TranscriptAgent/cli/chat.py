@@ -55,6 +55,19 @@ def plain(text: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*|`([^`]+)`", lambda m: m.group(1) or m.group(2), text)
 
 
+def without_link(text: str, url: str) -> str:
+    """The text with every copy of the link (any query string) cut out, in case a reply repeats it despite the system
+    prompt: a whole markdown link, or a bare one, with its backticks, emphasis or <> but not the punctuation after it."""
+    link = re.escape(url.split("?", 1)[0]) + r"(?:[^\s<>()`*\[\]]*[^\s<>()`*\[\],.;:!?'\"])?"
+    wrap_open, wrap_close = r"(?:`|\*\*|\*|__|_)?", r"(?:`|\*\*|\*|__|_)?"
+    cut = re.sub(wrap_open + r"\[[^\]]*\]\(<?" + link + r">?\)" + wrap_close, "", text)
+    cut = re.sub(wrap_open + r"<?" + link + r">?" + wrap_close, "", cut)
+    if cut == text:
+        return text.strip()
+    cut = re.sub(r"[ \t]+([,.;:!?])", r"\1", cut)  # no space left before the punctuation after the link
+    return re.sub(r"[ \t]{2,}", " ", cut).strip()
+
+
 def safe_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .") or "transcript"
 
@@ -143,26 +156,37 @@ class Chat:
         self.turn = 0  # counts the user's messages
         self.pending_path = None  # the recording to send when the agent hands out an upload link
         self.pending_turn = 0  # the message that gave pending_path
+        self.failed = False  # a request couldn't reach the agent, or it returned an error
 
     def send(self, payload: dict) -> dict | None:
         try:
             result = summarize(invoke(self.agent_url, self.session_id, payload))
+        except urllib.error.HTTPError as e:  # reached the agent, but it failed
+            print(f"  The agent at {self.agent_url} returned an error: HTTP {e.code} {e.reason}.")
+            self.failed = True
+            return None
         except (urllib.error.URLError, OSError) as e:
             print(f"  Can't reach the agent at {self.agent_url} ({e}). Is `agentcore dev` running?")
+            self.failed = True
             return None
         if result["upload_url"]:
             # The agent is ready for a recording: upload it here instead of showing the link
-            for error in result["errors"]:
-                print(f"  Error: {error}")
+            self.show(result, hide=result["upload_url"])
+            # A confirmation in the same reply is answered first, or the upload message would answer it
+            self.confirm(result)
             return self.finish_upload(result["upload_url"], result["audio_key"])
         self.show(result)
         return self.confirm(result)
 
-    def show(self, result: dict):
+    def show(self, result: dict, hide: str | None = None):
+        """Print replies and transcripts in order, then errors; hide is an upload link to cut out of the replies."""
         for kind, value in result["items"]:
             if kind == "transcript":
                 self.show_transcript(value)
-            else:
+                continue
+            if hide:
+                value = without_link(value, hide)
+            if value:
                 print("\n" + plain(value) + "\n")
         for error in result["errors"]:
             print(f"  Error: {error}")
@@ -234,6 +258,7 @@ class Chat:
         problem = check_recording(path)
         if problem:
             print(f"  {problem}")
+            self.failed = True
             return
         # Kept until the agent hands out an upload link, even if it first asks which meeting it's for
         self.pending_path, self.pending_turn = path, self.turn
@@ -309,11 +334,16 @@ def main():
     chat = Chat(agent_url, args.transcripts)
     if args.upload:
         chat.upload(args.upload, args.meeting or "")
+        if chat.failed:
+            sys.exit(1)  # the recording can't be used, or the agent couldn't be reached
         if chat.pending_path and not args.message:
             chat.loop()  # the agent asked which meeting it's for; stay so the user can answer
+            return
     if args.message:
         chat.handle(" ".join(args.message))
-    if not args.upload and not args.message:
+        if chat.failed:
+            sys.exit(1)  # a one-off request that didn't get through
+    elif not args.upload:
         chat.loop()
 
 

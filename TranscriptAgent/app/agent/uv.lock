@@ -458,18 +458,6 @@ wheels = [
 ]
 
 [[package]]
-name = "faker"
-version = "40.44.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/87/22/965c7b822f4c80f6e003c696d5fa01b48eea6cc7852d61aec8779519b346/faker-40.44.0.tar.gz", hash = "sha256:97245a3756dcaf35418b89bea9f03ae6881557db0032bf048744c2aaee2a9108", size = 2034259, upload-time = "2026-10-28T17:06:41.048Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/9e/3da962809aefa00ddf457d1b11bba41d7766373a0ad9e537fa0804604361/faker-40.44.0-py3-none-any.whl", hash = "sha256:db808a3ec33fe9ce5caf40b9fb61f85f46e429a56966f765209272adec83e4c6", size = 2069747, upload-time = "2026-10-28T17:06:39.109Z" },
-]
-
-[[package]]
 name = "flask"
 version = "3.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2341,7 +2329,6 @@ version = "0.1.0"
 source = { directory = "../../../public_meeting_transcript_archive" }
 dependencies = [
     { name = "boto3" },
-    { name = "faker" },
     { name = "flask" },
     { name = "flask-migrate" },
     { name = "flask-sqlalchemy" },
@@ -2355,7 +2342,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.34" },
-    { name = "faker", specifier = ">=25.0" },
     { name = "flask", specifier = ">=3.0" },
     { name = "flask-migrate", specifier = ">=4.0" },
     { name = "flask-sqlalchemy", specifier = ">=3.1" },

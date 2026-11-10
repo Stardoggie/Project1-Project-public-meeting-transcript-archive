@@ -333,3 +333,119 @@ def test_a_single_quoted_path_with_an_apostrophe_inside(tmp_path):
     assert find_recording(f"'{path}'") == (str(path), "")
     assert find_recording(f"'{path}' for the mayor's meeting") == (str(path), "for the mayor's meeting")
     assert find_recording("'C:\\nope\\Bob's.mp3'")[0] != "s.mp3"  # never the fragment after the apostrophe
+
+
+def test_end_of_input_at_a_prompt_cancels_without_a_traceback(recordings, monkeypatch, capsys):
+    def closed(prompt=""):
+        raise EOFError
+    monkeypatch.setattr("builtins.input", closed)
+    confirmation = [{"type": "confirmation_required", "question": "Please confirm: delete meeting 3."}]
+    chat = FakeChat([[{"type": "ai", "text": "Cancelled."}]])
+    chat.confirm(summarize(confirmation))
+    assert chat.sent == [{"confirm": False}]
+
+    chat = FakeChat([UPLOAD_EVENTS])  # the path prompt ends too: nothing is uploaded
+    monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
+    chat.handle("I want to add a recording to the zoning meeting")
+    assert chat.uploaded == [] and "Not uploaded." in capsys.readouterr().out
+
+
+def _agent_replies(monkeypatch, *responses):
+    """Make the real Chat.send get these event lists from the agent, in order; returns what was sent."""
+    queue, sent = list(responses), []
+    monkeypatch.setattr("chat.invoke", lambda url, session, payload: sent.append(payload) or queue.pop(0))
+    return sent
+
+
+def test_server_errors_are_not_reported_as_unreachable(monkeypatch, capsys):
+    import urllib.error
+
+    def fail(url, session, payload):
+        raise urllib.error.HTTPError(url, 500, "Internal Server Error", {}, None)
+    monkeypatch.setattr("chat.invoke", fail)
+    assert Chat("http://agent.invalid").send({"prompt": "hi"}) is None
+    out = capsys.readouterr().out
+    assert "HTTP 500 Internal Server Error" in out and "Can't reach" not in out
+
+    def unreachable(url, session, payload):
+        raise urllib.error.URLError("Connection refused")
+    monkeypatch.setattr("chat.invoke", unreachable)
+    Chat("http://agent.invalid").send({"prompt": "hi"})
+    assert "Can't reach the agent" in capsys.readouterr().out
+
+
+def test_a_reply_with_an_upload_link_is_still_shown_without_the_link(recordings, monkeypatch, capsys):
+    link = [{"type": "ai", "text": "Ready for the recording at https://s3/put?X-Amz-Signature=abc"}, *UPLOAD_EVENTS,
+            {"type": "confirmation_required", "question": "Please confirm: replace the recording for meeting 3."}]
+    sent = _agent_replies(monkeypatch, link, [{"type": "ai", "text": "Okay."}], ATTACHED_EVENTS)
+    uploaded = []
+    monkeypatch.setattr("chat.put_file", lambda url, path: uploaded.append(path) or 200)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    Chat("http://agent.invalid").handle(f'"{recordings}" Budget Hearing')
+    out = capsys.readouterr().out
+    assert "Ready for the recording at" in out and "https://s3/put" not in out
+    assert sent[1] == {"confirm": True} and sent[2]["prompt"].startswith("The upload is done")
+    assert uploaded == [recordings]
+
+
+def test_markdown_upload_links_are_removed_whole(recordings, monkeypatch, capsys):
+    link = [{"type": "ai", "text": "Ready: [upload](https://s3/put?X-Amz-Signature=abc) or <https://s3/put?sig=2>."},
+            *UPLOAD_EVENTS]
+    _agent_replies(monkeypatch, link, ATTACHED_EVENTS)
+    monkeypatch.setattr("chat.put_file", lambda url, path: 200)
+    Chat("http://agent.invalid").handle(f'"{recordings}" Budget Hearing')
+    out = capsys.readouterr().out
+    assert "Ready: or." in out and "[upload]" not in out and "s3/put" not in out and "<" not in out
+
+
+def test_a_one_off_request_that_fails_exits_non_zero(monkeypatch):
+    import sys
+    import urllib.error
+    import chat as chat_module
+
+    def fail(url, session, payload):
+        raise urllib.error.HTTPError(url, 500, "Internal Server Error", {}, None)
+    monkeypatch.setattr(chat_module, "invoke", fail)
+    monkeypatch.setattr(sys, "argv", ["chat.py", "--agent-url", "http://agent.invalid", "What meetings are there?"])
+    with pytest.raises(SystemExit) as exited:
+        chat_module.main()
+    assert exited.value.code == 1
+
+    monkeypatch.setattr(chat_module, "invoke", lambda url, session, payload: [{"type": "ai", "text": "None yet."}])
+    chat_module.main()  # a request that gets through exits normally
+
+
+def test_link_wrappers_go_with_the_link_and_punctuation_stays():
+    from chat import without_link
+
+    url = "https://s3/put?X-Amz-Signature=abc"
+    assert without_link(f"Upload to `{url}`, then tell me.", url) == "Upload to, then tell me."
+    assert without_link(f"Use **{url}**. Done", url) == "Use. Done"
+    assert without_link(f"Send it to {url}, then wait.", url) == "Send it to, then wait."
+    assert without_link(f"Here: **[upload]({url})**!", url) == "Here:!"
+    assert without_link(f"Link: <{url}>; ok", url) == "Link:; ok"
+    assert without_link("No link here, really.", url) == "No link here, really."
+
+
+def test_upload_exits_non_zero_when_it_cant_go_ahead(tmp_path, monkeypatch, capsys):
+    import sys
+    import urllib.error
+    import chat as chat_module
+
+    good = tmp_path / "hearing.mp3"
+    good.write_bytes(b"ID3")
+    notes = tmp_path / "notes.txt"
+    notes.write_text("x")
+    loops = []
+    monkeypatch.setattr(chat_module.Chat, "loop", lambda self: loops.append(True))
+
+    def unreachable(url, session, payload):
+        raise urllib.error.URLError("Connection refused")
+    monkeypatch.setattr(chat_module, "invoke", unreachable)
+    for path, message in [(str(good), "Can't reach the agent"), (str(tmp_path / "missing.mp3"), "File not found"),
+                          (str(notes), "Only MP3 and WAV")]:
+        monkeypatch.setattr(sys, "argv", ["chat.py", "--agent-url", "http://agent.invalid", "--upload", path])
+        with pytest.raises(SystemExit) as exited:
+            chat_module.main()
+        assert exited.value.code == 1 and message in capsys.readouterr().out
+    assert loops == []  # never dropped into the chat

@@ -28,6 +28,8 @@ def app(monkeypatch):
         yield app
         db.session.remove()
         db.drop_all()
+        #each test builds a new engine, so close its pooled connections
+        db.engine.dispose()
 
 
 @pytest.fixture
