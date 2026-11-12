@@ -14,20 +14,10 @@ file defines a Starlette ASGI app that runs a LangGraph graph.
 - `graph/graph.py` wires the graph: `agent` → `tools` → `agent`, with destructive tool calls routed to `confirm`.
 - `graph/nodes.py` holds the nodes, the system prompt and the rules for which tool calls need the user's confirmation.
 - `transcript_tools.py` defines the archive tools; `model/load.py` instantiates the Bedrock model.
-- `memory.py` records turns in, and recalls records from, AgentCore Memory's long-term strategies.
 
 Conversation state is checkpointed per session: AgentCore Memory when deployed (`MEMORY_AGENTMEMORY_ID`), in-process
-memory locally.
-
-## Long-term memory
-
-When `MEMORY_AGENTMEMORY_ID` is set, each turn's user message and the agent's replies (text only, not tool results)
-are also stored as conversational events for the `actorId` and session, so the memory's strategies in
-`agentcore/agentcore.json` can extract facts, preferences, session summaries and episodes from them. Before the model
-answers a new message, the top 3 records from `/users/{actorId}/facts`, `/users/{actorId}/preferences` and
-`/summaries/{actorId}/{sessionId}` that match it are added to the system prompt, marked as remembered background data
-rather than instructions (episodes are stored but not read back). Without the variable, as under a plain
-`agentcore dev`, none of this runs. Memory errors are logged and the turn carries on without it.
+memory locally. The agent only remembers within a session; the archive itself is the long-term record, so the memory
+in `agentcore/agentcore.json` has no long-term strategies.
 
 ## Payload
 
@@ -35,13 +25,7 @@ The Runtime accepts a JSON object. `parse_payload()` reads:
 
 - `prompt` (string) — the user's message. The conversation history is kept per session, so send only the new message.
 - `confirm` (boolean, optional) — answers a pending confirmation without a prompt. `true` runs the action; anything else cancels it.
-- `actorId` (string, optional) — identifies the end user for Memory. Defaults to `"default"`.
-
-`actorId` is taken from the caller as sent, not authenticated: anyone who can invoke the runtime can send another
-user's `actorId` and get that user's remembered facts and preferences added to their prompt (and add events to that
-user's memory). The AgentCore SDK's request context carries no verified user identity, so the agent can't check it.
-Only let trusted callers (your own backend, which sets `actorId` from its own sign-in) invoke the runtime, or don't
-use long-term memory for data users must not see of each other.
+- `actorId` (string, optional) — identifies the end user in the session's checkpoints. Defaults to `"default"`.
 
 The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header (`context.session_id`); reuse it to continue a conversation. A request without the header gets a fresh session id
 of its own, so header-less callers never share a conversation or answer each other's confirmations; a pending
@@ -78,7 +62,7 @@ shown, so it never reads or retypes the text.
 | `DATABASE_URL` | Yes | Postgres URL of the archive database |
 | `AWS_REGION` | Yes | Region for Transcribe, Comprehend, S3 and AgentCore Memory |
 | `MEETING_BUCKET_NAME` | Yes | S3 bucket for recordings and Transcribe output |
-| `MEMORY_AGENTMEMORY_ID` | No | AgentCore Memory id (set by `agentcore deploy`). Unset: in-process checkpoints and no long-term memory |
+| `MEMORY_AGENTMEMORY_ID` | No | AgentCore Memory id (set by `agentcore deploy`). Unset: in-process checkpoints |
 | `MEETING_LOG_LEVEL` | No | Log level of the archive code's logs (default `DEBUG`) |
 | `DATABASE_TEST_URL` | Tests only | A separate database for the tests; they refuse to use `DATABASE_URL`'s |
 

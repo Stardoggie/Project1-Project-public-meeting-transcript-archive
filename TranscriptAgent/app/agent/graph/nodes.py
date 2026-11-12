@@ -1,11 +1,9 @@
 """Nodes of the transcript archive graph, and the rules for which tool calls need the user's confirmation."""
 import json
 import re
-from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import MessagesState
-from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
 
 from transcript_tools import (
@@ -40,13 +38,6 @@ NO = re.compile(r"\s*(n|no|nope|cancel|stop|don't|do not|never mind|nevermind)\b
 DECLINED = "Not run: the user did not confirm this action, so nothing was changed."
 INTERRUPTED = "Not run: the previous request ended before this tool ran, so nothing was changed."
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
-
-
-@dataclass
-class AgentContext:
-    """Per-request data for the nodes that isn't saved with the conversation."""
-
-    memory: str = ""  # remembered background from long-term memory, already marked as data
 
 
 def needs_confirmation(call: dict) -> bool:
@@ -132,11 +123,9 @@ def make_agent_node(model):
     """The agent node: the chat model with the archive tools bound, behind the system prompt."""
     model_with_tools = model.bind_tools(TOOLS)
 
-    async def agent(state: MessagesState, runtime: Runtime[AgentContext]):
+    async def agent(state: MessagesState):
         history = [_for_model(m) for m in state["messages"]]
-        remembered = getattr(runtime.context, "memory", "")
-        system = f"{SYSTEM_PROMPT}\n\n{remembered}" if remembered else SYSTEM_PROMPT
-        reply = await model_with_tools.ainvoke([SystemMessage(system), *history])
+        reply = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT), *history])
         return {"messages": [reply]}
 
     return agent

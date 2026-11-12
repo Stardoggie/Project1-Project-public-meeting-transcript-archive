@@ -17,7 +17,7 @@ from langgraph.prebuilt import ToolNode
 
 from transcript_tools import TOOLS
 
-from .nodes import AgentContext, confirm, make_agent_node, needs_confirmation
+from .nodes import confirm, make_agent_node, needs_confirmation
 
 
 def _needs_any_confirmation(calls: list) -> bool:
@@ -36,7 +36,7 @@ async def route_after_agent(state: MessagesState) -> Literal["tools", "confirm",
 
 def build_graph(model, checkpointer=None):
     """Compile the agent graph around a chat model that supports tool calling."""
-    graph = StateGraph(MessagesState, context_schema=AgentContext)
+    graph = StateGraph(MessagesState)
     graph.add_node("agent", make_agent_node(model))
     graph.add_node("tools", ToolNode(TOOLS))
     graph.add_node("confirm", confirm, destinations=("agent",))
