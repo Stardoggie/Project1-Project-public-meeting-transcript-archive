@@ -4,12 +4,10 @@ import logging
 import re
 import uuid
 from typing import Annotated, Any
-
 from langchain_core.tools import tool as _lc_tool
 from pydantic import BaseModel, WithJsonSchema
 from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
-
 from meeting_transcript.app import create_app
 from meeting_transcript.aws.aws import get_s3_client
 from meeting_transcript.config import BUCKET_NAME
@@ -21,7 +19,6 @@ from meeting_transcript.meetings.models_db import Meeting
 from meeting_transcript.analysis import store as analysis
 from meeting_transcript.transcription import store as transcripts
 from meeting_transcript.transcription import service as transcription
-
 MAX_TRANSCRIPT_CHARS = 40_000
 UPLOAD_URL_SECONDS = 3600
 # The only key shape request_audio_upload hands out
@@ -35,11 +32,8 @@ ID_DIGITS = re.compile(r"\s*\d+\s*", re.ASCII)
 # What a delete tool says when the model calls it directly; deletes only run from the app's confirmation step
 DELETE_NOT_RUN = {"error": "not_run", "detail": "Nothing was deleted. Deletes only run through the app's own "
                   "confirmation prompt, which the app shows by itself; the user's reply in chat can't authorise one."}
-
 log = logging.getLogger(__name__)
-
 _flask = create_app()  # only used for its database context
-
 # Send each docstring's Args section to the model as per-argument descriptions
 tool = functools.partial(_lc_tool, parse_docstring=True, error_on_invalid_docstring=False)
 
@@ -80,7 +74,14 @@ def _run(fn, *args, **kwargs):
 
 
 def _not_found(result, what: str):
-    return {"error": "not_found", "detail": f"{what} not found"} if result is None else result
+    """The result as is, or a not-found error when a store function returned None."""
+    if result is None:
+        return {"error": "not_found", "detail": f"{what} not found"}
+    return result
+
+
+def _nothing_deleted(what: str) -> dict:
+    return {"error": "not_found", "detail": f"{what} not found; nothing was deleted"}
 
 
 def _meeting_summary(meeting_id: int) -> dict | None:
@@ -100,7 +101,10 @@ def _body_summary(body_id: int) -> dict | None:
     rows = db.session.execute(
         select(Meeting.id, Meeting.title, Meeting.meeting_date).where(Meeting.body_id == body_id).order_by(Meeting.id)
     )
-    found = [{"id": i, "title": title, "meeting_date": day.isoformat()} for i, title, day in rows]
+    found = [
+        {"id": meeting_id, "title": title, "meeting_date": meeting_date.isoformat()}
+        for meeting_id, title, meeting_date in rows
+    ]
     return {"id": record.id, "name": record.name, "meeting_count": len(found), "meetings": found}
 
 
@@ -147,8 +151,10 @@ def _check_body(body_id):
     """A not-found error for a governing body id that doesn't exist, otherwise None."""
     exists = _run(_body_exists, body_id)
     if isinstance(exists, dict):
-        return exists
-    return None if exists else {"error": "not_found", "detail": "governing body not found"}
+        return exists  # the lookup itself failed; pass its error on
+    if exists:
+        return None
+    return {"error": "not_found", "detail": "governing body not found"}
 
 
 def _delete_body(body_id: int) -> dict | None:
@@ -172,9 +178,9 @@ def _invalid_id(what: str) -> dict:
 
 def _model_delete(lookup, record_id, what: str) -> dict:
     """What a delete tool tells the model: not found, invalid id, or that only the app's prompt runs deletes."""
-    found = lookup(record_id)[0]
+    found, _ = lookup(record_id)
     if found == "missing":
-        return {"error": "not_found", "detail": f"{what} not found; nothing was deleted"}
+        return _nothing_deleted(what)
     if found == "invalid":
         return _invalid_id(what)
     return DELETE_NOT_RUN
@@ -185,7 +191,7 @@ def _confirmed_delete(delete, record_id, what: str) -> dict:
     if record_id is None:
         return _invalid_id(what)
     if record_id > MAX_ID:
-        return {"error": "not_found", "detail": f"{what} not found; nothing was deleted"}
+        return _nothing_deleted(what)
     return _not_found(_run(delete, record_id), what)
 
 
@@ -265,7 +271,7 @@ def search_meetings(
     key_phrase: str | None = None,
     status: str | None = None,
     start_date: str | None = None,
-    end_date: str | None = None,
+    end_date: str | None = None
 ) -> list | dict:
     """Find meetings of a governing body.
 
@@ -401,7 +407,12 @@ def show_full_transcript(meeting_id: int) -> tuple[str, dict | None]:
     text = _run(transcripts.get_transcript, meeting_id)
     if not isinstance(text, str):
         return "This meeting has no transcript yet.", None
-    shown = {"meeting_id": meeting_id, "title": meeting["title"], "meeting_date": meeting["meeting_date"], "transcript": text}
+    shown = {
+        "meeting_id": meeting_id,
+        "title": meeting["title"],
+        "meeting_date": meeting["meeting_date"],
+        "transcript": text
+    }
     note = (
         f"The full transcript of '{meeting['title']}' ({meeting['meeting_date']}, {len(text):,} characters) "
         "has been shown to the user directly. Don't repeat or summarize it unless they ask."
@@ -426,13 +437,15 @@ def meeting_has_transcript(meeting_id) -> bool:
         return False  # can't name a meeting, so the tool attaches nothing
     meeting = _run(meetings.list_meeting, meeting_id)
     if meeting is None:
-        return False
-    return not isinstance(meeting, dict) or "error" in meeting or bool(meeting.get("transcript_available"))
+        return False  # no such meeting
+    if not isinstance(meeting, dict) or "error" in meeting:
+        return True  # the lookup failed, so play it safe and ask
+    return bool(meeting.get("transcript_available"))
 
 
 TOOLS = [
     list_governing_bodies, get_governing_body, create_governing_body, update_governing_body, delete_governing_body,
     search_meetings, get_meeting, create_meeting, update_meeting, delete_meeting,
     request_audio_upload, attach_uploaded_audio, start_transcription, check_transcription,
-    get_transcript, show_full_transcript, get_trending_entities,
+    get_transcript, show_full_transcript, get_trending_entities
 ]

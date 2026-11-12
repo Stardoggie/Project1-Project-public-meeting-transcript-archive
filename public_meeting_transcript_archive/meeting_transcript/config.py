@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-
 load_dotenv()
 AWS_REGION = os.environ["AWS_REGION"]
 BUCKET_NAME = os.environ["MEETING_BUCKET_NAME"]
@@ -16,7 +15,6 @@ class AppSettings(BaseSettings) :
     env_prefix - the prefix for all the env vars to look for
     extra - decides how to contain env file vvars that dont have mappings in the class
     """
-
     model_config = SettingsConfigDict(env_file=[".env",".env.prod"], env_prefix="MEETING_", extra= "ignore")
     # giving default values means this class can still be instantiated withou an .env file
     data_path: Path = Path("data/logger.json")

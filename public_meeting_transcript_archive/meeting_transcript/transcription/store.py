@@ -141,7 +141,7 @@ def claim_analysis(meeting_id:int,job_key:str)->str|None:
             Meeting.id == meeting_id,
             Meeting.transcribe_job_name == job_key,
             Meeting.analysis_completed.is_not(True),
-            Meeting.analysis_claimed_at.is_(None) | (Meeting.analysis_claimed_at < func.now() - ANALYSIS_CLAIM_TIMEOUT),
+            Meeting.analysis_claimed_at.is_(None) | (Meeting.analysis_claimed_at < func.now() - ANALYSIS_CLAIM_TIMEOUT)
         )
         .values(analysis_claimed_at=func.now())
         .execution_options(synchronize_session=False)

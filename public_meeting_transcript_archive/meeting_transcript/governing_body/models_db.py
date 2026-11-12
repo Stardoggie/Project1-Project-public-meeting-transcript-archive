@@ -13,7 +13,6 @@ class GoverningBody(db.Model):
     name:Mapped[str] = mapped_column(String(60),nullable=False)
     body:Mapped[str] = mapped_column(String(20),nullable=False)
     description:Mapped[str] = mapped_column(Text,nullable=False)  #does it need a description?
-
     meetings: Mapped[list["Meeting"]] = relationship(
     back_populates="body",
     cascade="all, delete-orphan"

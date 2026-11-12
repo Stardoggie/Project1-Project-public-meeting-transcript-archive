@@ -32,7 +32,6 @@ def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int,j
     if job_key is not None and (meeting.transcribe_job_name != job_key or unclaimed):
         db.session.rollback()
         return False
-
         #comprehend is in a dictionary, so have to convert it into a usable dictionary
     for entity,count in entity_counts.items():
             entity_dto_data = {
@@ -54,7 +53,6 @@ def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int,j
             db.session.add(record)
     meeting.analysis_completed = True
     meeting.analysis_claimed_at = None
-
     db.session.commit()
     return True
 
