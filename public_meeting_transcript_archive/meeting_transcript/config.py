@@ -1,6 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+from urllib.parse import quote
+import json
 import os
+import boto3
 from dotenv import load_dotenv
 load_dotenv()
 AWS_REGION = os.environ["AWS_REGION"]
@@ -22,3 +25,22 @@ class AppSettings(BaseSettings) :
     log_level: str = "DEBUG"
 
 
+def database_url() -> str:
+    """
+        the database to connect to: DATABASE_URL when it is set (local .env, tests),
+        otherwise built from the secrets manager secret named in DATABASE_SECRET_ID (the deployed agent),
+        so the deployed password only ever lives in secrets manager
+    """
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    secret_id = os.environ.get("DATABASE_SECRET_ID")
+    if not secret_id:
+        raise RuntimeError("Set DATABASE_URL, or DATABASE_SECRET_ID to the name of the database's secret")
+    #read the host, port, user, password and database name stored in the secret
+    secrets = boto3.client("secretsmanager",region_name=AWS_REGION)
+    secret = json.loads(secrets.get_secret_value(SecretId=secret_id)["SecretString"])
+    user = quote(secret["username"],safe="")
+    password = quote(secret["password"],safe="")#escapes any character that would break the url
+    address = f"{secret['host']}:{secret.get('port',5432)}/{secret.get('dbname','transcript_archive')}"
+    #sslmode=require encrypts the connection
+    return f"postgresql+psycopg://{user}:{password}@{address}?sslmode=require"
