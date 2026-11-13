@@ -131,10 +131,11 @@ Attaching checks the size again. A corrupted file makes the Transcribe job fail,
 failure.
 
 ### Where uploads go
-Uploads land in `uploads/` in the bucket. Attaching one to a meeting moves it into `audio/`, where recordings are
-kept. Anything still in `uploads/` (a cancelled, rejected or never-attached upload) is deleted after a day by an S3
-lifecycle rule on the bucket (Management → Lifecycle rules: prefix `uploads/`, expire current versions after 1 day),
-so nothing piles up. If attaching fails, the upload stays in `uploads/` until then, so attaching again still works.
+Uploads land in `uploads/` in the bucket. Attaching one to a meeting copies it into `audio/` under a new name of its
+own, where recordings are kept. Anything still in `uploads/` (a cancelled, rejected or never-attached upload) is
+deleted after a day by an S3 lifecycle rule on the bucket (Management → Lifecycle rules: prefix `uploads/`, expire
+current versions after 1 day), so nothing piles up. If attaching fails, the upload stays in `uploads/` until then, so
+attaching again still works.
 
 ### No speech detected
 A finished job with an empty transcript is a valid result, not an error: it is stored as "No audio was detected." and
