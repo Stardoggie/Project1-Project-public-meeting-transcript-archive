@@ -1,4 +1,5 @@
 """Offline tests for the CLI's parsing and checks; no agent or AWS needed."""
+import json
 import pytest
 from chat import MAX_BYTES, Chat, check_recording, find_recording, plain, safe_filename
 from client import summarize
@@ -48,7 +49,7 @@ class FakeChat(Chat):
         self.sent.append(payload)
         result = summarize(self.replies.pop(0))
         if result["upload_url"]:
-            return self.finish_upload(result["upload_url"], result["audio_key"])
+            return self.finish_upload(result["upload_url"], result["audio_key"], result["upload_fields"])
         return result
 
 
@@ -516,3 +517,67 @@ def test_find_runtime_arn_prefers_the_env_var_then_agentcore_status(monkeypatch)
     assert client.find_runtime_arn() == RUNTIME_ARN
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, stdout="", stderr="no"))
     assert client.find_runtime_arn() is None
+
+
+FORM_FIELDS = {"key": "uploads/meeting-transcription-x.mp3", "Content-Type": "audio/mpeg", "policy": "abc", "x-amz-signature": "sig"}
+POST_EVENTS = [{"type": "tool", "tool": "request_audio_upload",
+                "text": json.dumps({"upload_url": "https://s3/bucket", "upload_fields": FORM_FIELDS,
+                                    "audio_key": "uploads/meeting-transcription-x.mp3", "method": "POST"})}]
+
+
+class FakeResponse:
+    status = 204
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_post_file_sends_the_signed_fields_then_the_file(tmp_path, monkeypatch):
+    import email
+    import urllib.request
+    from client import post_file
+    recording = tmp_path / "hearing.mp3"
+    recording.write_bytes(b"ID3" + b"x" * 3000000)  # bigger than one read, so it's sent in chunks
+    sent = {}
+    def fake_urlopen(request, timeout=None):
+        sent["body"] = b"".join(request.data)
+        sent["headers"] = dict(request.header_items())
+        return FakeResponse()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert post_file("https://s3/bucket", FORM_FIELDS, str(recording)) == 204
+    assert int(sent["headers"]["Content-length"]) == len(sent["body"])
+    form = email.message_from_bytes(f"Content-Type: {sent['headers']['Content-type']}\r\n\r\n".encode() + sent["body"])
+    parts = [(part.get_param("name", header="content-disposition"), part.get_payload(decode=True)) for part in form.get_payload()]
+    assert [name for name, _ in parts] == list(FORM_FIELDS) + ["file"]  # S3 needs the file last
+    assert dict(parts)["Content-Type"] == b"audio/mpeg" and dict(parts)["file"] == recording.read_bytes()
+
+
+def test_a_form_upload_link_is_uploaded_with_post(recordings, monkeypatch):
+    chat = FakeChat([POST_EVENTS, ATTACHED_EVENTS])
+    posted = []
+    monkeypatch.setattr("chat.post_file", lambda url, fields, path: posted.append((url, fields, path)) or 204)
+    monkeypatch.setattr("chat.put_file", lambda url, path: pytest.fail("used PUT for a form upload"))
+    chat.handle(f"{recordings} for the zoning meeting")
+    assert posted == [("https://s3/bucket", FORM_FIELDS, recordings)]
+    assert chat.sent[-1]["prompt"].startswith("The upload is done")
+
+
+def test_s3_refusing_a_file_is_explained(recordings, monkeypatch, capsys):
+    import io
+    import urllib.error
+    def too_large(url, fields, path):
+        body = io.BytesIO(b"<Error><Code>EntityTooLarge</Code><Message>too big</Message></Error>")
+        raise urllib.error.HTTPError(url, 400, "Bad Request", {}, body)
+    monkeypatch.setattr("chat.post_file", too_large)
+    chat = FakeChat([POST_EVENTS])
+    chat.handle(f"{recordings} for the zoning meeting")
+    assert "S3 refused the file (EntityTooLarge)" in capsys.readouterr().out
+    assert len(chat.sent) == 1  # nothing is attached after a refused upload
+
+
+def test_summarize_keeps_the_upload_form_fields():
+    result = summarize(POST_EVENTS)
+    assert result["upload_fields"] == FORM_FIELDS and result["upload_url"] == "https://s3/bucket"

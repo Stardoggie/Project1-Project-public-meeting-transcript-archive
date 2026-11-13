@@ -124,10 +124,17 @@ Comprehend has a size limit, so transcripts are split into chunks of up to 5,000
 separately.
 
 ### Unsupported or corrupted audio
-Only MP3 and WAV recordings are accepted. The agent hands out a one-hour presigned S3 upload link (the CLI uploads
-the file to it by itself), and other file types are refused before a link is made. Empty files and files over
-500 MB are refused when the upload is attached to a meeting. A corrupted file makes the Transcribe job fail, which is
-handled as a Transcribe failure.
+Only MP3 and WAV recordings are accepted. The agent hands out a one-hour signed S3 upload form (a presigned POST; the
+CLI uploads the file with it by itself), and other file types are refused before a form is made. The form's signature
+limits the file to 1 byte–500 MB and the matching audio type, so S3 itself refuses anything else before storing it.
+Attaching checks the size again. A corrupted file makes the Transcribe job fail, which is handled as a Transcribe
+failure.
+
+### Where uploads go
+Uploads land in `uploads/` in the bucket. Attaching one to a meeting moves it into `audio/`, where recordings are
+kept. Anything still in `uploads/` (a cancelled, rejected or never-attached upload) is deleted after a day by an S3
+lifecycle rule on the bucket (Management → Lifecycle rules: prefix `uploads/`, expire current versions after 1 day),
+so nothing piles up. If attaching fails, the upload stays in `uploads/` until then, so attaching again still works.
 
 ### No speech detected
 A finished job with an empty transcript is a valid result, not an error: it is stored as "No audio was detected." and
