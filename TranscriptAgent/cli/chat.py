@@ -15,7 +15,7 @@ import re
 import sys
 import urllib.error
 import uuid
-from client import DeployedAgentError, find_agent_url, find_runtime_arn, invoke, invoke_deployed, put_file, summarize
+from client import DeployedAgentError, find_agent_url, find_runtime_arn, invoke, invoke_deployed, post_file, put_file, summarize
 from console import ask, read_message
 ALLOWED_EXTENSIONS = {".mp3", ".wav"}
 MAX_BYTES = 500 * 1024 * 1024
@@ -220,7 +220,7 @@ class Chat:
             self.show(result, hide=result["upload_url"])
             # A confirmation in the same reply is answered first, or the upload message would answer it
             self.confirm(result)
-            return self.finish_upload(result["upload_url"], result["audio_key"])
+            return self.finish_upload(result["upload_url"], result["audio_key"], result["upload_fields"])
         self.show(result)
         return self.confirm(result)
 
@@ -260,8 +260,9 @@ class Chat:
             result = self.send({"confirm": said_yes(answer)})
         return result
 
-    def finish_upload(self, url: str, audio_key: str | None = None) -> dict | None:
-        """Upload the recording to the link the agent handed out, then have it attach and transcribe."""
+    def finish_upload(self, url: str, audio_key: str | None = None, fields: dict | None = None) -> dict | None:
+        """Upload the recording to the link the agent handed out, then have it attach and transcribe.
+        fields are the signed form fields when S3 wants a form upload (POST) rather than a plain PUT."""
         path = self.pending_path
         self.pending_path = None
         # A path from this message or the one before (e.g. answering "which meeting?") is used straight away; an
@@ -292,11 +293,20 @@ class Chat:
         size_mb = os.path.getsize(path) / 1024 / 1024
         print(f"  Uploading {os.path.basename(path)} ({size_mb:,.1f} MB)...", end=" ", flush=True)
         try:
-            status = put_file(url, path)
+            if fields:
+                status = post_file(url, fields, path)
+            else:
+                status = put_file(url, path)
+        except urllib.error.HTTPError as e:
+            # S3 refused it, e.g. EntityTooLarge or a wrong type; its reason is in the XML it sends back
+            code = re.search(r"<Code>(\w+)</Code>", e.read().decode("utf-8", "replace"))
+            reason = code.group(1) if code else f"HTTP {e.code}"
+            print(f"failed: S3 refused the file ({reason}).")
+            return None
         except (urllib.error.URLError, OSError) as e:
             print(f"failed: {e}")
             return None
-        if status != 200:
+        if status not in (200, 201, 204):
             print(f"failed (HTTP {status}).")
             return None
         print("done.")

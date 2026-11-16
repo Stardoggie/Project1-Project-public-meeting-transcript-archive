@@ -3,6 +3,7 @@ AgentCore runtime through boto3, which signs each request with your AWS credenti
 import json
 import os
 import subprocess
+import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -108,6 +109,7 @@ def summarize(events: list[dict]) -> dict:
         "tools": [],
         "confirmation": None,
         "upload_url": None,
+        "upload_fields": None,
         "audio_key": None,
         "errors": []
     }
@@ -128,10 +130,44 @@ def summarize(events: list[dict]) -> dict:
             try:
                 handed_out = json.loads(event["text"])
                 result["upload_url"] = handed_out.get("upload_url")
+                result["upload_fields"] = handed_out.get("upload_fields")  # set when S3 wants a form upload (POST)
                 result["audio_key"] = handed_out.get("audio_key")
             except (ValueError, AttributeError):
                 pass
     return result
+
+
+def _form_parts(fields: dict, path: str, boundary: str) -> tuple[bytes, bytes]:
+    """The text that goes before and after the file in a multipart form upload. S3 needs every signed field first and
+    the file last."""
+    before = b""
+    for name, value in fields.items():
+        before += f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+    file_name = os.path.basename(path).replace('"', "")
+    before += f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{file_name}"\r\n\r\n'.encode()
+    after = f"\r\n--{boundary}--\r\n".encode()
+    return before, after
+
+
+def _form_body(before: bytes, path: str, after: bytes):
+    """The form upload's body, read from disk a megabyte at a time so a large recording isn't loaded into memory."""
+    yield before
+    with open(path, "rb") as f:
+        while chunk := f.read(1024 * 1024):
+            yield chunk
+    yield after
+
+
+def post_file(url: str, fields: dict, path: str) -> int:
+    """Upload a recording with the signed S3 form the agent handed out; returns the HTTP status (S3 answers 204).
+    S3 checks the size and type against the form's signed limits and refuses the file before storing it."""
+    boundary = f"----transcript-archive-{uuid.uuid4().hex}"
+    before, after = _form_parts(fields, path, boundary)
+    size = len(before) + os.path.getsize(path) + len(after)
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Content-Length": str(size)}
+    request = urllib.request.Request(url, data=_form_body(before, path, after), method="POST", headers=headers)
+    with urllib.request.urlopen(request, timeout=600) as response:
+        return response.status
 
 
 def put_file(url: str, path: str) -> int:
