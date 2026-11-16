@@ -4,8 +4,10 @@
     python chat.py "What meetings are there?"        ask one question and exit
     python chat.py --upload PATH --meeting "Budget Hearing, Springfield City Council"
     python chat.py --upload PATH                     upload; chats until the agent knows which meeting
+    python chat.py --deployed                        chat with the agent deployed to AWS instead
 
-Start the agent first with `agentcore dev` in TranscriptAgent/.
+Start the agent first with `agentcore dev` in TranscriptAgent/, or deploy it with `agentcore deploy`.
+--deployed signs requests with your AWS credentials, so it needs boto3 (the archive's .venv has it).
 """
 import argparse
 import os
@@ -13,7 +15,7 @@ import re
 import sys
 import urllib.error
 import uuid
-from client import find_agent_url, invoke, put_file, summarize
+from client import DeployedAgentError, find_agent_url, find_runtime_arn, invoke, invoke_deployed, put_file, summarize
 from console import ask, read_message
 ALLOWED_EXTENSIONS = {".mp3", ".wav"}
 MAX_BYTES = 500 * 1024 * 1024
@@ -182,8 +184,9 @@ def said_yes(answer: str) -> bool:
 
 
 class Chat:
-    def __init__(self, agent_url: str, transcript_dir: str = "."):
+    def __init__(self, agent_url: str, transcript_dir: str = ".", runtime_arn: str | None = None):
         self.agent_url = agent_url
+        self.runtime_arn = runtime_arn  # set when chatting with the deployed agent instead of a local one
         self.transcript_dir = transcript_dir
         self.session_id = new_session()
         self.turn = 0  # counts the user's messages
@@ -191,9 +194,19 @@ class Chat:
         self.pending_turn = 0  # the message that gave pending_path
         self.failed = False  # a request couldn't reach the agent, or it returned an error
 
+    def _request(self, payload: dict) -> list[dict]:
+        """One request to whichever agent this chat talks to: the deployed runtime, or the local one."""
+        if self.runtime_arn:
+            return invoke_deployed(self.runtime_arn, self.session_id, payload)
+        return invoke(self.agent_url, self.session_id, payload)
+
     def send(self, payload: dict) -> dict | None:
         try:
-            result = summarize(invoke(self.agent_url, self.session_id, payload))
+            result = summarize(self._request(payload))
+        except DeployedAgentError as e:
+            print(f"  The deployed agent couldn't answer: {e}")
+            self.failed = True
+            return None
         except urllib.error.HTTPError as e:  # reached the agent, but it failed
             print(f"  The agent at {self.agent_url} returned an error: HTTP {e.code} {e.reason}.")
             self.failed = True
@@ -365,12 +378,21 @@ def main():
     parser.add_argument("--upload", metavar="PATH", help="upload an MP3/WAV recording and start transcription")
     parser.add_argument("--meeting", help="which meeting the --upload recording is for")
     parser.add_argument("--agent-url", help="agent endpoint (default: AGENT_URL, or a local agentcore dev)")
+    parser.add_argument("--deployed", action="store_true", help="chat with the agent deployed to AWS")
     parser.add_argument("--transcripts", default=".", metavar="DIR", help="where to save full transcripts")
     args = parser.parse_args()
-    agent_url = args.agent_url or find_agent_url()
-    if not agent_url:
-        sys.exit("Can't find the agent. Start it with `agentcore dev` in TranscriptAgent/, or set AGENT_URL.")
-    chat = Chat(agent_url, args.transcripts)
+    if args.deployed:
+        runtime_arn = find_runtime_arn()
+        if not runtime_arn:
+            sys.exit("Can't find the deployed agent. Deploy it with `agentcore deploy` in TranscriptAgent/, "
+                     "or set AGENT_RUNTIME_ARN.")
+        print(f"Using the deployed agent: {runtime_arn}")
+        chat = Chat(runtime_arn, args.transcripts, runtime_arn=runtime_arn)
+    else:
+        agent_url = args.agent_url or find_agent_url()
+        if not agent_url:
+            sys.exit("Can't find the agent. Start it with `agentcore dev` in TranscriptAgent/, or set AGENT_URL.")
+        chat = Chat(agent_url, args.transcripts)
     if args.upload:
         chat.upload(args.upload, args.meeting or "")
         if chat.failed:

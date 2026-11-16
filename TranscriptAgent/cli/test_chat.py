@@ -435,3 +435,84 @@ def test_upload_exits_non_zero_when_it_cant_go_ahead(tmp_path, monkeypatch, caps
             chat_module.main()
         assert exited.value.code == 1 and message in capsys.readouterr().out
     assert loops == []  # never dropped into the chat
+
+
+RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-east-1:111122223333:runtime/TranscriptAgent_default_agent-abc"
+
+
+def test_deployed_mode_sends_to_the_runtime_not_the_local_agent(monkeypatch):
+    import chat as chat_module
+    sent = []
+    monkeypatch.setattr(chat_module, "invoke", lambda url, session, payload: pytest.fail("used the local agent"))
+    monkeypatch.setattr(chat_module, "invoke_deployed",
+                        lambda arn, session, payload: sent.append((arn, payload)) or [{"type": "ai", "text": "Hi."}])
+    chat = Chat(RUNTIME_ARN, runtime_arn=RUNTIME_ARN)
+    chat.handle("What meetings are there?")
+    assert sent == [(RUNTIME_ARN, {"prompt": "What meetings are there?"})] and not chat.failed
+
+
+def test_deployed_errors_are_shown_and_mark_the_chat_failed(monkeypatch, capsys):
+    import chat as chat_module
+    from client import DeployedAgentError
+    def refuse(arn, session, payload):
+        raise DeployedAgentError("AccessDeniedException: not allowed")
+    monkeypatch.setattr(chat_module, "invoke_deployed", refuse)
+    chat = Chat(RUNTIME_ARN, runtime_arn=RUNTIME_ARN)
+    chat.handle("Hello")
+    assert "The deployed agent couldn't answer: AccessDeniedException: not allowed" in capsys.readouterr().out
+    assert chat.failed
+
+
+class FakeStream:
+    def __init__(self, lines):
+        self.lines = lines
+
+    def iter_lines(self):
+        return iter(self.lines)
+
+
+def test_invoke_deployed_signs_a_request_and_reads_the_stream(monkeypatch):
+    import boto3
+    from client import invoke_deployed
+    calls = {}
+    class FakeAgentCore:
+        def invoke_agent_runtime(self, **request):
+            calls["request"] = request
+            return {"response": FakeStream([b'data: {"type": "ai", "text": "Hello"}', b"", b": keep-alive"])}
+    def fake_client(service, region_name=None, config=None):
+        calls["service"], calls["region"] = service, region_name
+        return FakeAgentCore()
+    monkeypatch.setattr(boto3, "client", fake_client)
+    events = invoke_deployed(RUNTIME_ARN, "cli-session", {"prompt": "Hi"})
+    assert events == [{"type": "ai", "text": "Hello"}]
+    assert calls["service"] == "bedrock-agentcore" and calls["region"] == "us-east-1"
+    assert calls["request"]["agentRuntimeArn"] == RUNTIME_ARN and calls["request"]["runtimeSessionId"] == "cli-session"
+    assert calls["request"]["payload"] == b'{"prompt": "Hi"}'
+
+
+def test_invoke_deployed_turns_aws_errors_into_a_readable_message(monkeypatch):
+    import boto3
+    from botocore.exceptions import ClientError
+    from client import DeployedAgentError, invoke_deployed
+    class RefusingAgentCore:
+        def invoke_agent_runtime(self, **request):
+            raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "no access"}}, "InvokeAgentRuntime")
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: RefusingAgentCore())
+    with pytest.raises(DeployedAgentError, match="AccessDeniedException: no access"):
+        invoke_deployed(RUNTIME_ARN, "cli-session", {"prompt": "Hi"})
+
+
+def test_find_runtime_arn_prefers_the_env_var_then_agentcore_status(monkeypatch):
+    import json
+    import subprocess
+    import client
+    monkeypatch.setenv("AGENT_RUNTIME_ARN", "arn:from-env")
+    assert client.find_runtime_arn() == "arn:from-env"
+    monkeypatch.delenv("AGENT_RUNTIME_ARN")
+    status = {"resources": [{"resourceType": "memory", "deploymentState": "deployed", "arn": "arn:memory"},
+                            {"resourceType": "runtime", "deploymentState": "deployed", "arn": RUNTIME_ARN}]}
+    finished = subprocess.CompletedProcess([], 0, stdout=json.dumps(status), stderr="")
+    monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: finished)
+    assert client.find_runtime_arn() == RUNTIME_ARN
+    monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, stdout="", stderr="no"))
+    assert client.find_runtime_arn() is None

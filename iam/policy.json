@@ -2,7 +2,7 @@
     "Version": "2012-10-17",
     "Statement": [
         {
-            "Sid": "MeetingAudioAndTranscripts",
+            "Sid": "S3TicketBucket",
             "Effect": "Allow",
             "Action": [
                 "s3:GetObject",
@@ -34,16 +34,23 @@
             "Resource": "*"
         },
         {
-            "Sid": "AgentCoreMemoryCheckpoints",
+            "Sid": "ReadDevDatabasePassword",
             "Effect": "Allow",
             "Action": [
-                "bedrock-agentcore:CreateEvent",
-                "bedrock-agentcore:GetEvent",
-                "bedrock-agentcore:ListEvents",
-                "bedrock-agentcore:DeleteEvent",
-                "bedrock-agentcore:ListSessions"
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret"
             ],
-            "Resource": "arn:aws:bedrock-agentcore:*:*:memory/*"
+            "Resource": "arn:aws:secretsmanager:us-east-1:397345411365:secret:TranscriptionDBSecret-*"
+        },
+        {
+            "Sid": "SeeDatabaseStatus",
+            "Effect": "Allow",
+            "Action": [
+                "rds:DescribeDBClusters",
+                "rds:DescribeDBInstances",
+                "rds:DescribeDBEngineVersions"
+            ],
+            "Resource": "*"
         }
     ]
 }

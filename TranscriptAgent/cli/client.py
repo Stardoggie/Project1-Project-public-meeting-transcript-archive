@@ -1,10 +1,21 @@
-"""Talks to the transcript agent through AgentCore's /invocations endpoint (standard library only)."""
+"""Talks to the transcript agent: a local `agentcore dev` over plain HTTP (standard library only), or the deployed
+AgentCore runtime through boto3, which signs each request with your AWS credentials."""
 import json
 import os
+import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 # agentcore dev normally uses 8080 but moves to the next free port when 8080 is busy
 LOCAL_PORTS = range(8080, 8090)
+# The AgentCore project folder (TranscriptAgent/), where `agentcore status` knows what is deployed
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+# A turn can run several tools, so give the deployed agent as long to answer as the local one
+DEPLOYED_READ_TIMEOUT_SECONDS = 300
+
+
+class DeployedAgentError(Exception):
+    """The deployed agent couldn't be called, or it returned an error; the message says which."""
 
 
 def find_agent_url() -> str | None:
@@ -21,6 +32,61 @@ def find_agent_url() -> str | None:
     return None
 
 
+def find_runtime_arn() -> str | None:
+    """AGENT_RUNTIME_ARN if set, otherwise the deployed runtime that `agentcore status` reports for this project."""
+    if os.environ.get("AGENT_RUNTIME_ARN"):
+        return os.environ["AGENT_RUNTIME_ARN"]
+    try:
+        status = subprocess.run(["agentcore", "status", "--json"], cwd=PROJECT_DIR, capture_output=True, text=True, timeout=60)
+        resources = json.loads(status.stdout).get("resources", [])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    for resource in resources:
+        if resource.get("resourceType") == "runtime" and resource.get("deploymentState") == "deployed":
+            return resource.get("arn")
+    return None
+
+
+def _events_from_lines(lines) -> list[dict]:
+    """The agent's streamed events: every `data: {...}` line of the response."""
+    events = []
+    for raw in lines:
+        line = raw.decode("utf-8").strip() if isinstance(raw, bytes) else raw.strip()
+        if line.startswith("data: "):
+            events.append(json.loads(line[6:]))
+    return events
+
+
+def invoke_deployed(runtime_arn: str, session_id: str, payload: dict) -> list[dict]:
+    """Send one request to the deployed AgentCore runtime and return its streamed events."""
+    try:
+        import boto3
+        from botocore.config import Config
+        from botocore.exceptions import BotoCoreError, ClientError
+    except ImportError:
+        raise DeployedAgentError("deployed mode needs boto3; run the chat with the archive's .venv python, "
+                                 "or install boto3") from None
+    region = runtime_arn.split(":")[3]  # arn:aws:bedrock-agentcore:<region>:<account>:runtime/<id>
+    agentcore = boto3.client("bedrock-agentcore", region_name=region,
+                             config=Config(read_timeout=DEPLOYED_READ_TIMEOUT_SECONDS))
+    try:
+        response = agentcore.invoke_agent_runtime(
+            agentRuntimeArn=runtime_arn,
+            runtimeSessionId=session_id,
+            payload=json.dumps(payload).encode(),
+            contentType="application/json",
+            accept="text/event-stream"
+        )
+        return _events_from_lines(response["response"].iter_lines())
+    except ClientError as e:
+        # AWS answered, but refused or failed: show its own error code and message
+        error = e.response.get("Error", {})
+        raise DeployedAgentError(f"{error.get('Code', 'error')}: {error.get('Message', e)}") from None
+    except BotoCoreError as e:
+        # no answer at all: credentials, network or a timeout
+        raise DeployedAgentError(str(e)) from None
+
+
 def invoke(agent_url: str, session_id: str, payload: dict) -> list[dict]:
     """Send one request to the agent and return its streamed events."""
     request = urllib.request.Request(
@@ -28,13 +94,8 @@ def invoke(agent_url: str, session_id: str, payload: dict) -> list[dict]:
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id}
     )
-    events = []
     with urllib.request.urlopen(request, timeout=300) as response:
-        for raw in response:
-            line = raw.decode("utf-8").strip()
-            if line.startswith("data: "):
-                events.append(json.loads(line[6:]))
-    return events
+        return _events_from_lines(response)
 
 
 def summarize(events: list[dict]) -> dict:

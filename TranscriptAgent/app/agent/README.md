@@ -59,8 +59,9 @@ shown, so it never reads or retypes the text.
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `DATABASE_URL` | Yes | Postgres URL of the archive database |
-| `AWS_REGION` | Yes | Region for Transcribe, Comprehend, S3 and AgentCore Memory |
+| `DATABASE_SECRET_ID` | One of these two | Name of the Secrets Manager secret with the database's host, port, username, password and dbname; read at startup (the deployed agent uses this) |
+| `DATABASE_URL` | One of these two | Postgres URL of the archive database; when set it is used instead of the secret |
+| `AWS_REGION` | Yes | Region for Transcribe, Comprehend, S3, Secrets Manager and AgentCore Memory |
 | `MEETING_BUCKET_NAME` | Yes | S3 bucket for recordings and Transcribe output |
 | `MEMORY_AGENTMEMORY_ID` | No | AgentCore Memory id (set by `agentcore deploy`). Unset: in-process checkpoints |
 | `MEETING_LOG_LEVEL` | No | Log level of the archive code's logs (default `DEBUG`) |
@@ -79,8 +80,20 @@ Command Prompt, or `.\.venv\Scripts\activate.ps1` in Windows PowerShell.
 
 After providing credentials, `agentcore deploy` will deploy your project into Amazon Bedrock AgentCore.
 
-Invoke the deployed Runtime with its native payload:
+The deployed runtime is set up entirely in `agentcore/agentcore.json`; there is no CDK stack code:
+
+- `envVars` gives the runtime `DATABASE_SECRET_ID` (the secret's name, never the password), `MEETING_BUCKET_NAME` and
+  `AWS_REGION`. AgentCore adds `MEMORY_AGENTMEMORY_ID` itself.
+- `additionalPolicies` attaches the existing IAM managed policy `meeting-transcript-archive` (S3 audio and transcripts,
+  Transcribe, Comprehend, and reading the database secret). `iam/policy.json` at the repo root is a copy of it.
+
+Both the secret and the policy are made outside this project (in the AWS console) and must exist before deploying.
+The database's security group must allow port 5432 from the runtime, which has no fixed address.
+
+Invoke the deployed Runtime with its native payload (session ids need at least 33 characters):
 
 ```bash
-agentcore invoke --runtime agent --payload '{"prompt":"Hello!"}'
+agentcore invoke --runtime agent --payload '{"prompt":"Hello!"}' --session-id <33+ characters>
 ```
+
+or chat with it from `../../cli/` with `chat.py --deployed` (see that README).
