@@ -16,7 +16,7 @@ archive> C:\Recordings\hearing.mp3 Budget Hearing, Springfield City Council
 archive> Check the transcription for Budget Hearing
 archive> Show me the full transcript of Budget Hearing
 archive> Delete the Budget Hearing meeting
-  Please confirm: delete meeting 66 and its transcript and analysis. [y/N]
+  Please confirm: delete meeting "Budget Hearing" on 2026-01-05 (Springfield City Council, id 66) and its transcript and analysis. [y/N]
 ```
 
 - **Recordings:** just give it the file's path, by typing it or dragging the file into the window, and it uploads
@@ -28,8 +28,9 @@ archive> Delete the Budget Hearing meeting
   https://...`), is sent as text and never uploads anything.
 - **Pasting:** a multi-line paste is sent as one message, not one per line. Lines of only punctuation (a stray
   backtick) are ignored.
-- **Confirmations:** deletes (and replacing a meeting's transcribed audio) ask `[y/N]`; Enter cancels. Anything typed
-  or pasted before the question appears is thrown away, so only what you type after it answers.
+- **Confirmations:** deletes (and replacing a meeting's transcribed audio) ask `[y/N]`; `y` or `yes` confirms, and
+  Enter, anything else or Ctrl+D (end of input) cancels. Anything typed or pasted before the question appears is thrown
+  away, so only what you type after it answers.
 - **Full transcripts** are printed and saved as `<meeting> <date>.txt` in the current folder (`--transcripts DIR` to
   change it).
 - `/new` starts a new conversation, `/help` lists commands, `/quit` exits.

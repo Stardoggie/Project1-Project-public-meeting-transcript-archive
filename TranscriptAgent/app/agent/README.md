@@ -14,9 +14,20 @@ file defines a Starlette ASGI app that runs a LangGraph graph.
 - `graph/graph.py` wires the graph: `agent` → `tools` → `agent`, with destructive tool calls routed to `confirm`.
 - `graph/nodes.py` holds the nodes, the system prompt and the rules for which tool calls need the user's confirmation.
 - `transcript_tools.py` defines the archive tools; `model/load.py` instantiates the Bedrock model.
+- `memory.py` records turns in, and recalls records from, AgentCore Memory's long-term strategies.
 
 Conversation state is checkpointed per session: AgentCore Memory when deployed (`MEMORY_AGENTMEMORY_ID`), in-process
 memory locally.
+
+## Long-term memory
+
+When `MEMORY_AGENTMEMORY_ID` is set, each turn's user message and the agent's replies (text only, not tool results)
+are also stored as conversational events for the `actorId` and session, so the memory's strategies in
+`agentcore/agentcore.json` can extract facts, preferences, session summaries and episodes from them. Before the model
+answers a new message, the top 3 records from `/users/{actorId}/facts`, `/users/{actorId}/preferences` and
+`/summaries/{actorId}/{sessionId}` that match it are added to the system prompt, marked as remembered background data
+rather than instructions (episodes are stored but not read back). Without the variable, as under a plain
+`agentcore dev`, none of this runs. Memory errors are logged and the turn carries on without it.
 
 ## Payload
 
@@ -26,7 +37,15 @@ The Runtime accepts a JSON object. `parse_payload()` reads:
 - `confirm` (boolean, optional) — answers a pending confirmation without a prompt. `true` runs the action; anything else cancels it.
 - `actorId` (string, optional) — identifies the end user for Memory. Defaults to `"default"`.
 
-The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header (`context.session_id`); reuse it to continue a conversation.
+`actorId` is taken from the caller as sent, not authenticated: anyone who can invoke the runtime can send another
+user's `actorId` and get that user's remembered facts and preferences added to their prompt (and add events to that
+user's memory). The AgentCore SDK's request context carries no verified user identity, so the agent can't check it.
+Only let trusted callers (your own backend, which sets `actorId` from its own sign-in) invoke the runtime, or don't
+use long-term memory for data users must not see of each other.
+
+The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header (`context.session_id`); reuse it to continue a conversation. A request without the header gets a fresh session id
+of its own, so header-less callers never share a conversation or answer each other's confirmations; a pending
+confirmation can only be answered with the header.
 
 ```json
 { "prompt": "Delete meeting 12", "actorId": "user-123" }
@@ -36,8 +55,11 @@ The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentC
 
 Deleting a governing body or meeting, or replacing the audio of a meeting that already has a transcript, pauses the
 graph. The response ends with a `confirmation_required` event describing exactly what will happen. The next request in
-the same session answers it: a bare yes (`"yes"`, `"ok"`, `"yes please"`, or `"confirm": true`) runs the action.
-Anything else cancels it; a reply other than a plain no is then handled as a new message.
+the same session answers it: only a plain "yes" (any case, trailing `.` or `!` allowed) or `"confirm": true` runs the
+action. Anything else, including "y", "ok", "sure" or "yes please", cancels it; a reply other than a plain no is then
+handled as a new message. A delete of an id that doesn't exist isn't confirmed at all: the tool reports it not found. If the lookup fails, the app
+still asks. The delete tools the model calls never delete anything themselves; only a yes to the app's own prompt
+runs the delete, so a model can't authorise one, whatever it passes or the user says in chat.
 
 ## Response events
 
@@ -53,7 +75,12 @@ shown, so it never reads or retypes the text.
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `LOCAL_DEV` | No | Set to `1` to use `.env.local` instead of AgentCore Identity |
+| `DATABASE_URL` | Yes | Postgres URL of the archive database |
+| `AWS_REGION` | Yes | Region for Transcribe, Comprehend, S3 and AgentCore Memory |
+| `MEETING_BUCKET_NAME` | Yes | S3 bucket for recordings and Transcribe output |
+| `MEMORY_AGENTMEMORY_ID` | No | AgentCore Memory id (set by `agentcore deploy`). Unset: in-process checkpoints and no long-term memory |
+| `MEETING_LOG_LEVEL` | No | Log level of the archive code's logs (default `DEBUG`) |
+| `DATABASE_TEST_URL` | Tests only | A separate database for the tests; they refuse to use `DATABASE_URL`'s |
 
 # Developing locally
 

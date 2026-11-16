@@ -18,14 +18,20 @@ def split_transcripton_chunk(text:str,max_words=5000)->list:
         chunks.append(chunk)
     return chunks
 
-def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int)->None:
+def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int,job_key:str|None=None)->bool:
     """
-        store entites and phrases in db
+        store entites and phrases in db, true if they were stored
+        with a job key, only while the meeting still has that job's transcript, an analysis claim and no results yet
     """
-    #the meeting can be deleted while comprehend runs, so skip the inserts
-    meeting = db.session.get(Meeting, meeting_id)
+    #the meeting can be deleted or get new audio while comprehend runs, so check again under a short row lock
+    meeting = db.session.get(Meeting, meeting_id, with_for_update=True, populate_existing=True)
     if meeting is None:
-        return
+        db.session.rollback()
+        return False
+    unclaimed = meeting.analysis_claimed_at is None or meeting.analysis_completed
+    if job_key is not None and (meeting.transcribe_job_name != job_key or unclaimed):
+        db.session.rollback()
+        return False
 
         #comprehend is in a dictionary, so have to convert it into a usable dictionary
     for entity,count in entity_counts.items():
@@ -47,8 +53,10 @@ def add_entities_and_phrases(key_phrases:set,entity_counts:dict,meeting_id:int)-
             record = KeyPhrases(phrase=valid_phrase.phrase, meeting_id=valid_phrase.meeting_id)
             db.session.add(record)
     meeting.analysis_completed = True
+    meeting.analysis_claimed_at = None
 
     db.session.commit()
+    return True
 
 
 def get_trending_entities(body_id:int)->dict:

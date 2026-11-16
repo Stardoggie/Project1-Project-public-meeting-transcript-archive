@@ -32,6 +32,19 @@
                 "transcribe:DeleteTranscriptionJob"
             ],
             "Resource": "*"
+        },
+        {
+            "Sid": "AgentCoreMemoryCheckpointsAndLongTermRecords",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:CreateEvent",
+                "bedrock-agentcore:GetEvent",
+                "bedrock-agentcore:ListEvents",
+                "bedrock-agentcore:DeleteEvent",
+                "bedrock-agentcore:ListSessions",
+                "bedrock-agentcore:RetrieveMemoryRecords"
+            ],
+            "Resource": "arn:aws:bedrock-agentcore:*:*:memory/*"
         }
     ]
 }

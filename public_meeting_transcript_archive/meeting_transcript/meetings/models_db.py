@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey,String,Text,Boolean,Date
+from sqlalchemy import ForeignKey,String,Text,Boolean,Date,DateTime
 from sqlalchemy.orm import Mapped,mapped_column,relationship
 from meeting_transcript.extensions import db
 from datetime import datetime,timezone,date
@@ -17,6 +17,8 @@ class Meeting(db.Model):
     transcribe_job_name:Mapped[str |None] = mapped_column(Text,nullable=True)#     or transcriptions
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_completed: Mapped[bool] = mapped_column(default=False,nullable=True)
+    #when a status check claimed the analysis; a claim older than the timeout is abandoned and can be taken again
+    analysis_claimed_at: Mapped[datetime|None] = mapped_column(DateTime(timezone=True),nullable=True)
     #foreign key stuff and cascading deletion when this is deleted
     body_id:Mapped[int] = mapped_column(ForeignKey("governing_body.id"),nullable=False)
     body: Mapped["GoverningBody"] = relationship(

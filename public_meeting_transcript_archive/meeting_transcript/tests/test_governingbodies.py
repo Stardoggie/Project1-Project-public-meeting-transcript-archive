@@ -71,3 +71,14 @@ def test_delete_body(governing_body):
 
 def test_delete_body_not_found(app):
     assert store.delete_body(999999) is False
+
+
+def test_a_short_description_written_before_the_rule_still_lists(governing_body):
+    from meeting_transcript.extensions import db
+
+    governing_body.description = "Old"  # written directly, as an older version or a hand edit could have
+    db.session.commit()
+    assert [body.description for body in store.list_bodies()] == ["Old"]
+    assert store.list_body(governing_body.id).description == "Old"
+    with pytest.raises(ValidationError):
+        store.create_body({"name": "New", "body": "council", "description": "Old"})

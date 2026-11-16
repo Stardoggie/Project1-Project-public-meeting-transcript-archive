@@ -5,12 +5,13 @@ from typing import Literal
 Body = Literal["council","commission","board"]
 
 
+#the read models don't re-check the length rules, so a row written before a rule (or by hand) can still be read
 class governingBody(BaseModel):
     model_config = ConfigDict(from_attributes=True,extra="forbid")
     id: int
-    name: str =Field(max_length=60)
+    name: str
     body: Body
-    description: str =Field(min_length= 5)
+    description: str
 
 
 class CreateGoverningBodyDTO(BaseModel):
@@ -31,7 +32,7 @@ class UpdateGoverningBodyDTO(BaseModel):
 class ListGoverningBodyDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    name: str =Field(max_length=60)
+    name: str
     body: Body
-    description: str =Field(min_length= 5)
+    description: str
     meeting_count: int | None
