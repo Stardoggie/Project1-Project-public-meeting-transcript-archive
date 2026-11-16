@@ -1,16 +1,14 @@
 /**
- * The hosted front end's API, behind CloudFront at /api/*. It checks the caller's Cognito access token, then calls the
- * agent runtime with the caller's own identity: the actorId is the Cognito user, and the runtime session id is
- * prefixed with it, so one user can't read or answer another user's conversation.
+ * The hosted front end's API, behind CloudFront at /api/*. It calls the agent runtime for the page. There is no
+ * sign-in: each conversation is kept apart only by its session id, a random value the browser makes.
  *
- *   GET  /api/status   who is signed in, and the upload limits
+ *   GET  /api/status   the upload limits
  *   POST /api/chat     { "prompt": "..." } or { "confirm": true|false }, with an X-Session-Id header
  *
  * The response streams: a space every few seconds while the agent works (so CloudFront's origin timeout doesn't cut
  * a long turn off), then one JSON object. JSON.parse ignores the leading spaces.
  */
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
-import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import type { LambdaFunctionURLEvent } from 'aws-lambda';
 import type { Writable } from 'stream';
 
@@ -30,11 +28,6 @@ const KEEPALIVE_MS = 10_000;
 const MAX_PROMPT_CHARS = 20_000;
 const SESSION_ID = /^[A-Za-z0-9-]{33,100}$/;
 
-const verifier = CognitoJwtVerifier.create({
-  userPoolId: process.env.USER_POOL_ID!,
-  clientId: process.env.USER_POOL_CLIENT_ID!,
-  tokenUse: 'access',
-});
 const agentcore = new BedrockAgentCoreClient({});
 
 interface AgentEvent {
@@ -142,20 +135,11 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
     stream.end();
   };
 
-  // The token travels in X-Archive-Token: CloudFront's origin access control signs the request to this function and
-  // uses the Authorization header for that
-  let user;
-  try {
-    user = await verifier.verify(header(event, 'X-Archive-Token') ?? '');
-  } catch {
-    finish(401, { errors: ['Sign in again: your session has expired or is not valid.'] });
-    return;
-  }
   const method = event.requestContext.http.method;
   const path = event.rawPath;
 
   if (method === 'GET' && path === '/api/status') {
-    finish(200, { agent: 'deployed agent', user: user.username, max_bytes: MAX_BYTES, extensions: EXTENSIONS });
+    finish(200, { agent: 'deployed agent', max_bytes: MAX_BYTES, extensions: EXTENSIONS });
     return;
   }
   if (method !== 'POST' || path !== '/api/chat') {
@@ -176,7 +160,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
     finish(400, { errors: ['The request body must be JSON'] });
     return;
   }
-  const payload: Record<string, unknown> = { actorId: user.sub };
+  const payload: Record<string, unknown> = {};
   if (typeof request.prompt === 'string' && request.prompt.length <= MAX_PROMPT_CHARS) {
     payload.prompt = request.prompt;
   } else if (typeof request.confirm === 'boolean') {
@@ -190,7 +174,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
   const keepalive = setInterval(() => stream.write(' '), KEEPALIVE_MS);
   let result;
   try {
-    result = summarize(await invokeAgent(`${user.sub}-${sessionId}`, payload));
+    result = summarize(await invokeAgent(sessionId, payload));
   } catch (error) {
     console.error('InvokeAgentRuntime failed', error);
     result = { errors: ['The agent could not be reached. Try again in a moment.'] };

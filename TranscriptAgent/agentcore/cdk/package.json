@@ -20,7 +20,6 @@
     "@aws-sdk/client-bedrock-agentcore": "~3.1167.0",
     "@aws/agentcore-cdk": "1.0.0",
     "aws-cdk-lib": "~2.269.0",
-    "aws-jwt-verify": "~5.2.1",
     "constructs": "~10.7.0"
   }
 }

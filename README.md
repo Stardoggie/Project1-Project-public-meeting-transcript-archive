@@ -79,8 +79,8 @@ creates:
 - the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted
 - the runtime's permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use)
 - a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change
-- the web front end on CloudFront, with Cognito sign-in (see `TranscriptAgent/web/README.md`, which also has the
-  command for adding users). Its address is the stack's `SiteUrl` output
+- the web front end on CloudFront (see `TranscriptAgent/web/README.md`). Its address is the stack's `SiteUrl`
+  output. It has no sign-in: anyone with the address can use the agent
 
 The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` while it
 synthesizes and removes it afterwards. Keep the archive's dependencies listed in `app/agent/pyproject.toml` too.

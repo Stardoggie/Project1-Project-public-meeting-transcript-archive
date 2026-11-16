@@ -1,7 +1,6 @@
 import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
-import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -20,9 +19,11 @@ export interface WebFrontendProps {
 }
 
 /**
- * The hosted front end: TranscriptAgent/web/index.html on CloudFront, from a private bucket, with Cognito sign-in.
- * /api/* goes to a streaming Lambda (behind CloudFront origin access control) that checks the user's token and calls
- * the runtime as that user. There is no self sign-up: add users with `aws cognito-idp admin-create-user`.
+ * The hosted front end: TranscriptAgent/web/index.html on CloudFront, from a private bucket. /api/* goes to a streaming
+ * Lambda (behind CloudFront origin access control) that calls the runtime.
+ *
+ * There is no sign-in: anyone with the site's address can use the agent, including changing and deleting archive
+ * records and uploading recordings.
  */
 export class WebFrontend extends Construct {
   public readonly apiFunction: nodejs.NodejsFunction;
@@ -31,23 +32,6 @@ export class WebFrontend extends Construct {
   constructor(scope: Construct, id: string, props: WebFrontendProps) {
     super(scope, id);
     const stack = Stack.of(this);
-
-    // Sign-in
-    const userPool = new cognito.UserPool(this, 'Users', {
-      selfSignUpEnabled: false,
-      signInAliases: { email: true },
-      autoVerify: { email: true },
-      passwordPolicy: { minLength: 12 },
-      mfa: cognito.Mfa.OPTIONAL,
-      mfaSecondFactor: { otp: true, sms: false },
-      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
-      // The users outlive the stack, like the archive's recordings
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
-    const domain = userPool.addDomain('Login', {
-      cognitoDomain: { domainPrefix: `transcript-archive-${stack.account}` },
-      managedLoginVersion: cognito.ManagedLoginVersion.CLASSIC_HOSTED_UI,
-    });
 
     // API
     this.apiFunction = new nodejs.NodejsFunction(this, 'Api', {
@@ -65,7 +49,6 @@ export class WebFrontend extends Construct {
       },
       environment: {
         RUNTIME_ARN: props.runtimeArn,
-        USER_POOL_ID: userPool.userPoolId,
         NODE_OPTIONS: '--enable-source-maps',
       },
     });
@@ -113,29 +96,11 @@ export class WebFrontend extends Construct {
     });
     const siteUrl = `https://${this.distribution.distributionDomainName}`;
 
-    const client = userPool.addClient('Web', {
-      generateSecret: false,
-      oAuth: {
-        flows: { authorizationCodeGrant: true },
-        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-        callbackUrls: [`${siteUrl}/`],
-        logoutUrls: [`${siteUrl}/`],
-      },
-      supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO],
-      preventUserExistenceErrors: true,
-      accessTokenValidity: Duration.hours(1),
-      idTokenValidity: Duration.hours(1),
-      refreshTokenValidity: Duration.days(7),
-    });
-    this.apiFunction.addEnvironment('USER_POOL_CLIENT_ID', client.userPoolClientId);
-
     new s3deploy.BucketDeployment(this, 'SiteContent', {
       sources: [
         s3deploy.Source.asset(props.webDir, { exclude: ['*', '!index.html'] }),
-        s3deploy.Source.jsonData('config.json', {
-          loginUrl: domain.baseUrl(),
-          clientId: client.userPoolClientId,
-        }),
+        // Tells the page it's hosted (local server.py has no config.json), so it signs request bodies for CloudFront
+        s3deploy.Source.jsonData('config.json', { hosted: true }),
       ],
       destinationBucket: siteBucket,
       distribution: this.distribution,
@@ -151,6 +116,5 @@ export class WebFrontend extends Construct {
     });
 
     new CfnOutput(stack, 'SiteUrl', { value: siteUrl });
-    new CfnOutput(stack, 'UserPoolId', { value: userPool.userPoolId });
   }
 }

@@ -46,7 +46,6 @@
   input[type=file] { max-width: 240px; font-size: 13px; color: var(--muted); }
   .upload { align-items: center; flex-wrap: wrap; }
   #busy { color: var(--muted); font-size: 13px; min-height: 18px; }
-  .signin { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -56,22 +55,16 @@
     <h1>Meeting Transcript Archive</h1>
     <span id="agent"></span>
     <button id="new" type="button">New conversation</button>
-    <button id="signout" type="button" hidden>Sign out</button>
   </header>
 
-  <section id="signin" class="signin" hidden>
-    <p>Sign in to use the meeting transcript archive.</p>
-    <button class="primary" id="signin-button" type="button">Sign in</button>
-  </section>
-
-  <main id="log" aria-live="polite" hidden>
+  <main id="log" aria-live="polite">
     <div class="welcome">
       Ask about governing bodies, meetings and transcripts, e.g. “What meetings does Springfield City Council have?”
       To add a recording, choose an MP3 or WAV file below, say which meeting it is for, and press Upload.
     </div>
   </main>
 
-  <footer id="composer" hidden>
+  <footer id="composer">
     <div id="busy"></div>
     <form class="row" id="chat-form">
       <textarea id="prompt" rows="1" placeholder="Message the archive… (Enter to send, Shift+Enter for a new line)"></textarea>
@@ -158,102 +151,25 @@ function setBusy(text) {
   if (!text) $("prompt").focus();
 }
 
-// ----- Sign-in (hosted only: /config.json exists on CloudFront, not on the local server.py) -----
-let config = null;  // { loginUrl, clientId } when hosted
-const store = {
-  get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
-  set(key, value) { try { sessionStorage.setItem(key, value); } catch {} },
-  remove(key) { try { sessionStorage.removeItem(key); } catch {} },
-};
-const redirectUri = () => location.origin + "/";
-
-function base64url(bytes) {
-  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+// ----- Hosted or local: /config.json exists on CloudFront, not on the local server.py -----
+let config = null;  // { hosted: true } when hosted
 
 async function sha256Hex(data) {
   const buffer = typeof data === "string" ? new TextEncoder().encode(data) : data;
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", buffer))].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function signIn() {
-  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
-  const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
-  store.set("pkce_verifier", verifier);
-  store.set("oauth_state", state);
-  const challenge = base64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
-  const params = new URLSearchParams({
-    response_type: "code", client_id: config.clientId, redirect_uri: redirectUri(), scope: "openid email profile",
-    state, code_challenge: challenge, code_challenge_method: "S256",
-  });
-  location.assign(`${config.loginUrl}/oauth2/authorize?${params}`);
-}
-
-function signOut() {
-  for (const key of ["access_token", "refresh_token", "expires_at"]) store.remove(key);
-  const params = new URLSearchParams({ client_id: config.clientId, logout_uri: redirectUri() });
-  location.assign(`${config.loginUrl}/logout?${params}`);
-}
-
-async function tokenRequest(fields) {
-  const response = await fetch(`${config.loginUrl}/oauth2/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: config.clientId, ...fields }),
-  });
-  if (!response.ok) return false;
-  const tokens = await response.json();
-  store.set("access_token", tokens.access_token);
-  if (tokens.refresh_token) store.set("refresh_token", tokens.refresh_token);
-  store.set("expires_at", String(Date.now() + (tokens.expires_in - 60) * 1000));
-  return true;
-}
-
-/** Finish a sign-in redirect (?code=...), if this is one. */
-async function completeSignIn() {
-  const params = new URLSearchParams(location.search);
-  if (!params.has("code")) return;
-  history.replaceState(null, "", location.pathname);
-  const verifier = store.get("pkce_verifier");
-  const stateOk = params.get("state") && params.get("state") === store.get("oauth_state");
-  store.remove("pkce_verifier");
-  store.remove("oauth_state");
-  if (verifier && stateOk) {
-    await tokenRequest({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: redirectUri(), code_verifier: verifier });
-  }
-}
-
-/** A current access token, refreshed when it's about to expire; null means sign in again. */
-async function accessToken() {
-  if (store.get("access_token") && Date.now() < Number(store.get("expires_at"))) return store.get("access_token");
-  const refresh = store.get("refresh_token");
-  if (refresh && await tokenRequest({ grant_type: "refresh_token", refresh_token: refresh })) return store.get("access_token");
-  return null;
-}
-
-/** Headers for an /api call: the hosted API needs the user's token and the body's SHA-256 (CloudFront signs it). */
+/** Headers for an /api call: the hosted API needs the body's SHA-256, because CloudFront signs the request with it. */
 async function apiHeaders(body) {
   if (!config) return {};
-  const token = await accessToken();
-  if (!token) return null;
-  return { "X-Archive-Token": token, "x-amz-content-sha256": await sha256Hex(body ?? "") };
-}
-
-function showSignIn() {
-  $("signin").hidden = false;
-  $("log").hidden = $("composer").hidden = $("new").hidden = $("signout").hidden = true;
+  return { "x-amz-content-sha256": await sha256Hex(body ?? "") };
 }
 
 async function post(path, body, headers = {}) {
   try {
     // Only the hosted API needs the body's hash; local recordings go to server.py unread
-    const auth = config ? await apiHeaders(typeof body === "string" ? body : await body.arrayBuffer()) : {};
-    if (!auth) {
-      showSignIn();
-      return { errors: ["Your sign-in has expired. Sign in again."] };
-    }
-    const response = await fetch(path, { method: "POST", body, headers: { "X-Session-Id": sessionId, ...auth, ...headers } });
-    if (response.status === 401 && config) showSignIn();
+    const signing = config ? await apiHeaders(typeof body === "string" ? body : await body.arrayBuffer()) : {};
+    const response = await fetch(path, { method: "POST", body, headers: { "X-Session-Id": sessionId, ...signing, ...headers } });
     return JSON.parse(await response.text());
   } catch (e) {
     return { errors: [`Can't reach the server (${e.message}).` + (config ? "" : " Is server.py running?")] };
@@ -400,30 +316,16 @@ $("new").addEventListener("click", () => {
   note("Started a new conversation.");
 });
 
-$("signin-button").addEventListener("click", signIn);
-$("signout").addEventListener("click", signOut);
-
 async function init() {
   try {
     const response = await fetch("/config.json", { cache: "no-store" });
     if (response.ok) config = await response.json();
   } catch {}
-  if (config) {
-    await completeSignIn();
-    if (!(await accessToken())) {
-      showSignIn();
-      return;
-    }
-    $("signout").hidden = false;
-  }
-  $("log").hidden = $("composer").hidden = false;
   try {
-    const auth = await apiHeaders("");
-    const response = await fetch("/api/status", { headers: auth || {} });
-    if (response.status === 401 && config) return showSignIn();
+    const response = await fetch("/api/status", { headers: await apiHeaders("") });
     const status = await response.json();
     limits = { ...limits, ...status };
-    $("agent").textContent = config ? "Signed in" : status.agent;
+    $("agent").textContent = status.agent;
   } catch {}
   $("prompt").focus();
 }

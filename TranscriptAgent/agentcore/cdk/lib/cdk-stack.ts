@@ -219,7 +219,7 @@ export class AgentCoreStack extends Stack {
     // Update the runtime only once the database schema is current
     runtime.resource.node.addDependency(migrations);
 
-    // The hosted front end (CloudFront, Cognito sign-in, and the /api function that calls the runtime)
+    // The hosted front end (CloudFront, and the /api function that calls the runtime)
     const web = new WebFrontend(this, 'Web', {
       runtimeArn: runtime.runtimeArn,
       meetingBucket: bucket,
