@@ -4,12 +4,10 @@ import logging
 import re
 import uuid
 from typing import Annotated, Any
-
 from langchain_core.tools import tool as _lc_tool
 from pydantic import BaseModel, WithJsonSchema
 from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
-
 from meeting_transcript.app import create_app
 from meeting_transcript.aws.aws import get_s3_client
 from meeting_transcript.config import BUCKET_NAME
@@ -21,11 +19,16 @@ from meeting_transcript.meetings.models_db import Meeting
 from meeting_transcript.analysis import store as analysis
 from meeting_transcript.transcription import store as transcripts
 from meeting_transcript.transcription import service as transcription
-
 MAX_TRANSCRIPT_CHARS = 40_000
 UPLOAD_URL_SECONDS = 3600
+# Uploads land in uploads/ first; an S3 lifecycle rule deletes anything left there after a day, so files that are
+# never attached (cancelled, rejected, abandoned) don't pile up. Attached recordings are moved into audio/.
+UPLOAD_PREFIX = "uploads/"
+AUDIO_PREFIX = "audio/"
 # The only key shape request_audio_upload hands out
-AUDIO_KEY_PATTERN = re.compile(r"audio/meeting-transcription-[0-9a-f]{32}\.(mp3|wav)")
+AUDIO_KEY_PATTERN = re.compile(r"uploads/meeting-transcription-[0-9a-f]{32}\.(mp3|wav)")
+# The content type S3 requires for each format; the upload form is signed with it, so nothing else is accepted
+AUDIO_CONTENT_TYPES = {"mp3": "audio/mpeg", "wav": "audio/wav"}
 # Postgres's code for a foreign key violation: a missing referenced row, or a delete of a row still referenced
 FOREIGN_KEY_VIOLATION = "23503"
 # Ids are Postgres integers, so a bigger one can't name a row
@@ -35,11 +38,8 @@ ID_DIGITS = re.compile(r"\s*\d+\s*", re.ASCII)
 # What a delete tool says when the model calls it directly; deletes only run from the app's confirmation step
 DELETE_NOT_RUN = {"error": "not_run", "detail": "Nothing was deleted. Deletes only run through the app's own "
                   "confirmation prompt, which the app shows by itself; the user's reply in chat can't authorise one."}
-
 log = logging.getLogger(__name__)
-
 _flask = create_app()  # only used for its database context
-
 # Send each docstring's Args section to the model as per-argument descriptions
 tool = functools.partial(_lc_tool, parse_docstring=True, error_on_invalid_docstring=False)
 
@@ -80,7 +80,14 @@ def _run(fn, *args, **kwargs):
 
 
 def _not_found(result, what: str):
-    return {"error": "not_found", "detail": f"{what} not found"} if result is None else result
+    """The result as is, or a not-found error when a store function returned None."""
+    if result is None:
+        return {"error": "not_found", "detail": f"{what} not found"}
+    return result
+
+
+def _nothing_deleted(what: str) -> dict:
+    return {"error": "not_found", "detail": f"{what} not found; nothing was deleted"}
 
 
 def _meeting_summary(meeting_id: int) -> dict | None:
@@ -100,7 +107,10 @@ def _body_summary(body_id: int) -> dict | None:
     rows = db.session.execute(
         select(Meeting.id, Meeting.title, Meeting.meeting_date).where(Meeting.body_id == body_id).order_by(Meeting.id)
     )
-    found = [{"id": i, "title": title, "meeting_date": day.isoformat()} for i, title, day in rows]
+    found = [
+        {"id": meeting_id, "title": title, "meeting_date": meeting_date.isoformat()}
+        for meeting_id, title, meeting_date in rows
+    ]
     return {"id": record.id, "name": record.name, "meeting_count": len(found), "meetings": found}
 
 
@@ -147,8 +157,10 @@ def _check_body(body_id):
     """A not-found error for a governing body id that doesn't exist, otherwise None."""
     exists = _run(_body_exists, body_id)
     if isinstance(exists, dict):
-        return exists
-    return None if exists else {"error": "not_found", "detail": "governing body not found"}
+        return exists  # the lookup itself failed; pass its error on
+    if exists:
+        return None
+    return {"error": "not_found", "detail": "governing body not found"}
 
 
 def _delete_body(body_id: int) -> dict | None:
@@ -172,9 +184,9 @@ def _invalid_id(what: str) -> dict:
 
 def _model_delete(lookup, record_id, what: str) -> dict:
     """What a delete tool tells the model: not found, invalid id, or that only the app's prompt runs deletes."""
-    found = lookup(record_id)[0]
+    found, _ = lookup(record_id)
     if found == "missing":
-        return {"error": "not_found", "detail": f"{what} not found; nothing was deleted"}
+        return _nothing_deleted(what)
     if found == "invalid":
         return _invalid_id(what)
     return DELETE_NOT_RUN
@@ -185,7 +197,7 @@ def _confirmed_delete(delete, record_id, what: str) -> dict:
     if record_id is None:
         return _invalid_id(what)
     if record_id > MAX_ID:
-        return {"error": "not_found", "detail": f"{what} not found; nothing was deleted"}
+        return _nothing_deleted(what)
     return _not_found(_run(delete, record_id), what)
 
 
@@ -265,7 +277,7 @@ def search_meetings(
     key_phrase: str | None = None,
     status: str | None = None,
     start_date: str | None = None,
-    end_date: str | None = None,
+    end_date: str | None = None
 ) -> list | dict:
     """Find meetings of a governing body.
 
@@ -328,11 +340,18 @@ def request_audio_upload(filename: str) -> dict:
     extension = filename.rsplit(".", 1)[-1].lower()
     if extension not in transcription.ALLOWED_AUDIO_EXTENSIONS:
         return {"error": "unsupported_media_type", "detail": "Only MP3 and WAV are accepted."}
-    audio_key = f"audio/meeting-transcription-{uuid.uuid4().hex}.{extension}"
-    url = get_s3_client().generate_presigned_url(
-        "put_object", Params={"Bucket": BUCKET_NAME, "Key": audio_key}, ExpiresIn=UPLOAD_URL_SECONDS
+    audio_key = f"{UPLOAD_PREFIX}meeting-transcription-{uuid.uuid4().hex}.{extension}"
+    content_type = AUDIO_CONTENT_TYPES[extension]
+    # A signed upload form rather than a plain link: S3 itself refuses a file over the size limit, an empty one, or one
+    # that isn't this audio type, before storing anything
+    upload = get_s3_client().generate_presigned_post(
+        Bucket=BUCKET_NAME,
+        Key=audio_key,
+        Fields={"Content-Type": content_type},
+        Conditions=[{"Content-Type": content_type}, ["content-length-range", 1, transcription.MAX_AUDIO_BYTES]],
+        ExpiresIn=UPLOAD_URL_SECONDS
     )
-    return {"upload_url": url, "audio_key": audio_key, "method": "PUT"}
+    return {"upload_url": upload["url"], "upload_fields": upload["fields"], "audio_key": audio_key, "method": "POST"}
 
 
 @tool
@@ -344,16 +363,46 @@ def attach_uploaded_audio(body_id: int, meeting_id: int, audio_key: str) -> dict
     """
     if not AUDIO_KEY_PATTERN.fullmatch(audio_key):
         return {"error": "invalid_audio_key", "detail": "Use the audio_key returned by request_audio_upload."}
+    s3 = get_s3_client()
     try:
-        size = get_s3_client().head_object(Bucket=BUCKET_NAME, Key=audio_key)["ContentLength"]
+        size = s3.head_object(Bucket=BUCKET_NAME, Key=audio_key)["ContentLength"]
     except Exception:
         return {"error": "upload_not_found", "detail": "The file has not been uploaded yet."}
     if size == 0 or size > transcription.MAX_AUDIO_BYTES:
+        _delete_from_s3(s3, audio_key)  # it can never be used, so don't keep it
         return {"error": "invalid_size", "detail": f"File is {size} bytes; must be 1 byte to 500 MB."}
-    result = _run(transcripts.attach_audio, audio_key, meeting_id=meeting_id, body_id=body_id)
-    if result == {"out": "out_of_bounds"}:
-        return {"error": "wrong_governing_body", "detail": "Meeting is not in that governing body."}
-    return _not_found(result, "meeting")
+    # Keep the recording for good in audio/; anything still in uploads/ is deleted by the lifecycle rule
+    stored_key = _new_audio_key(audio_key)
+    try:
+        s3.copy_object(Bucket=BUCKET_NAME, Key=stored_key, CopySource={"Bucket": BUCKET_NAME, "Key": audio_key})
+    except Exception:
+        log.exception("Couldn't move %s into %s", audio_key, AUDIO_PREFIX)
+        return {"error": "upload_not_stored", "detail": "The upload couldn't be moved into storage; try attaching it again."}
+    result = _run(transcripts.attach_audio, stored_key, meeting_id=meeting_id, body_id=body_id)
+    attached = isinstance(result, dict) and "error" not in result and result != {"out": "out_of_bounds"}
+    if not attached:
+        # Nothing was attached: drop the stored copy but keep the upload, so attaching again still works
+        _delete_from_s3(s3, stored_key)
+        if result == {"out": "out_of_bounds"}:
+            return {"error": "wrong_governing_body", "detail": "Meeting is not in that governing body."}
+        return _not_found(result, "meeting")
+    _delete_from_s3(s3, audio_key)
+    return result
+
+
+def _new_audio_key(upload_key: str) -> str:
+    """A new name in audio/ for each attach, so two attaches of one upload never share (or delete) the same copy.
+    It keeps the upload's .mp3 or .wav, since Transcribe reads the format from it."""
+    extension = upload_key.rsplit(".", 1)[-1]
+    return f"{AUDIO_PREFIX}meeting-transcription-{uuid.uuid4().hex}.{extension}"
+
+
+def _delete_from_s3(s3, key: str):
+    """Delete one object; if that fails it's only logged, since a leftover upload is removed by the lifecycle rule."""
+    try:
+        s3.delete_object(Bucket=BUCKET_NAME, Key=key)
+    except Exception:
+        log.warning("Couldn't delete %s from S3", key, exc_info=True)
 
 
 @tool
@@ -401,7 +450,12 @@ def show_full_transcript(meeting_id: int) -> tuple[str, dict | None]:
     text = _run(transcripts.get_transcript, meeting_id)
     if not isinstance(text, str):
         return "This meeting has no transcript yet.", None
-    shown = {"meeting_id": meeting_id, "title": meeting["title"], "meeting_date": meeting["meeting_date"], "transcript": text}
+    shown = {
+        "meeting_id": meeting_id,
+        "title": meeting["title"],
+        "meeting_date": meeting["meeting_date"],
+        "transcript": text
+    }
     note = (
         f"The full transcript of '{meeting['title']}' ({meeting['meeting_date']}, {len(text):,} characters) "
         "has been shown to the user directly. Don't repeat or summarize it unless they ask."
@@ -426,13 +480,15 @@ def meeting_has_transcript(meeting_id) -> bool:
         return False  # can't name a meeting, so the tool attaches nothing
     meeting = _run(meetings.list_meeting, meeting_id)
     if meeting is None:
-        return False
-    return not isinstance(meeting, dict) or "error" in meeting or bool(meeting.get("transcript_available"))
+        return False  # no such meeting
+    if not isinstance(meeting, dict) or "error" in meeting:
+        return True  # the lookup failed, so play it safe and ask
+    return bool(meeting.get("transcript_available"))
 
 
 TOOLS = [
     list_governing_bodies, get_governing_body, create_governing_body, update_governing_body, delete_governing_body,
     search_meetings, get_meeting, create_meeting, update_meeting, delete_meeting,
     request_audio_upload, attach_uploaded_audio, start_transcription, check_transcription,
-    get_transcript, show_full_transcript, get_trending_entities,
+    get_transcript, show_full_transcript, get_trending_entities
 ]

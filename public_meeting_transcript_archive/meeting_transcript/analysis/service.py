@@ -8,7 +8,6 @@ def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99,job_k
         gets entities and key phrases from comprehend using chunks of transcript
         with a job key, the results are only stored if the meeting still has that job's transcript
     """
-
     entity_counts = {}
     key_phrase = set()
     chunks = split_transcripton_chunk(text)
@@ -41,16 +40,12 @@ def comprehend_entities_and_phrases(text:str,meeting_id:int,min_score=0.99,job_k
                 continue
             if len(text.split()) < 2:
                 continue
-
             if len(text) > 150:
                 continue
-
             if not any(char.isalpha() for char in text):
                 continue
-
             if text in ignored_phrases:
                 continue
-            
             if len(text) < 5:
                 continue
             key_phrase.add(text)

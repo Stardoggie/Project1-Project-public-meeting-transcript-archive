@@ -142,7 +142,6 @@ def get_transcription_job(meeting_id:int)->dict:
                 #leave it unanalysed so the next check tries again
                 release_analysis(meeting_id,job_name)
                 raise
-
     elif status == "FAILED":
         result["failure_reason"] = job.get("FailureReason","unknown")
         revert_transcribe_failure(meeting_id)

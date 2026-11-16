@@ -10,42 +10,23 @@
       "entrypoint": "main.py",
       "codeLocation": "app/agent",
       "runtimeVersion": "PYTHON_3_14",
-      "protocol": "HTTP"
+      "protocol": "HTTP",
+      "envVars": [
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        }
+      ],
+      "additionalPolicies": [
+        "arn:aws:iam::397345411365:policy/meeting-transcript-archive"
+      ]
     }
   ],
   "memories": [
     {
       "name": "agentMemory",
       "eventExpiryDuration": 30,
-      "strategies": [
-        {
-          "type": "SEMANTIC",
-          "namespaceTemplates": [
-            "/users/{actorId}/facts"
-          ]
-        },
-        {
-          "type": "USER_PREFERENCE",
-          "namespaceTemplates": [
-            "/users/{actorId}/preferences"
-          ]
-        },
-        {
-          "type": "SUMMARIZATION",
-          "namespaceTemplates": [
-            "/summaries/{actorId}/{sessionId}"
-          ]
-        },
-        {
-          "type": "EPISODIC",
-          "namespaceTemplates": [
-            "/episodes/{actorId}/{sessionId}"
-          ],
-          "reflectionNamespaceTemplates": [
-            "/episodes/{actorId}"
-          ]
-        }
-      ]
+      "strategies": []
     }
   ]
 }

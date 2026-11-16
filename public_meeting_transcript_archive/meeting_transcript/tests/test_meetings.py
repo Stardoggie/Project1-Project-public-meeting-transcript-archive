@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from meeting_transcript.analysis.store import get_meeting_topic
 from meeting_transcript.meetings import store
 
@@ -8,7 +7,7 @@ from meeting_transcript.meetings import store
 def test_create_meeting(governing_body):
     created = store.create_meeting(governing_body.id,{
         "title": "City Council Meeting",
-        "meeting_date": "2026-09-03",
+        "meeting_date": "2026-09-03"
     })
     assert created.title == "City Council Meeting"
     assert created.status == "scheduled"
@@ -19,10 +18,9 @@ def test_create_meeting(governing_body):
         {},
         {"title": ""},
         {"title": None},
-        {"meeting_date": "not-a-date"},
-    ],
+        {"meeting_date": "not-a-date"}
+    ]
 )
-
 def test_create_meeting_invalid_input(governing_body, payload):
     with pytest.raises(ValidationError):
         store.create_meeting(governing_body.id,payload)

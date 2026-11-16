@@ -10,29 +10,41 @@ topics with Amazon Comprehend. The agent is a LangGraph graph running on Amazon 
 ## Install
 ### Requirements
 - Python 3.11+ (the deployed runtime uses 3.14), [uv](https://docs.astral.sh/uv/), Node.js 20.12+, the AgentCore CLI (`npm install -g @aws/agentcore`)
-- AWS credentials (an AWS CLI profile) with the permissions in `iam/policy.json`, and Bedrock access to `us.anthropic.claude-sonnet-5-5`
-- PostgreSQL 16+ (a local install, or `docker compose up -d db` in `public_meeting_transcript_archive/`)
+- AWS credentials (an AWS CLI profile) with the permissions in `iam/policy.json`, and Bedrock access to `us.anthropic.claude-sonnet-5-5`.
+  `iam/policy.json` is a copy of the `meeting-transcript-archive` IAM policy, which the deployed runtime uses too.
+- PostgreSQL 16+. The dev database is an RDS instance (`lg-transcription-db`) whose host, user and password are in the
+  Secrets Manager secret `TranscriptionDBSecret`. Any other Postgres works too: a local install, or
+  `docker compose up -d db` in `public_meeting_transcript_archive/` (the tests use this one).
 - An S3 bucket for recordings and transcripts
 
 ### Settings
+The archive finds its database in one of two ways (`database_url()` in `meeting_transcript/config.py`):
+- `DATABASE_SECRET_ARN`: the ARN or name of a Secrets Manager secret holding `host`, `port`, `username`, `password` and
+  `dbname` (an "RDS database" secret has these). The archive reads it at startup and connects with SSL, so the password
+  is never written in a file. This is how the RDS dev database and the deployed agent connect.
+- `DATABASE_URL`: a full link, e.g. to a local Docker database. When it's set, it wins and the secret isn't read.
+
 Put these in `TranscriptAgent/agentcore/.env.local` (loaded by `agentcore dev`):
 ```
-DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive
+DATABASE_SECRET_ARN=TranscriptionDBSecret
 AWS_REGION=us-east-1
 MEETING_BUCKET_NAME=<your bucket>
 ```
-`agentcore dev` is the only thing that reads `.env.local`. The migration and test commands below need the same three
+`agentcore dev` is the only thing that reads `.env.local`. The migration and test commands below need the same
 settings from your environment or from a `.env` at the repo root (which `meeting_transcript/config.py` loads), plus
-`DATABASE_TEST_URL` pointing at a separate database for the tests:
+`DATABASE_TEST_URL` pointing at a separate database for the tests (a local one; the tests never use the secret):
 ```
-DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive
+DATABASE_SECRET_ARN=TranscriptionDBSecret
 DATABASE_TEST_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive_test
 AWS_REGION=us-east-1
 MEETING_BUCKET_NAME=<your bucket>
 ```
+To use a local database instead of RDS, replace `DATABASE_SECRET_ARN` in both files with
+`DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive`.
 
 ### Create the database tables
-In `public_meeting_transcript_archive/`, with `DATABASE_URL`, `AWS_REGION` and `MEETING_BUCKET_NAME` set (see above):
+In `public_meeting_transcript_archive/`, with the settings above (this creates the tables in whichever database they
+point at, RDS or local):
 ```
 pip install -e ".[dev]"
 flask --app meeting_transcript.app db upgrade
@@ -73,8 +85,15 @@ creates:
 The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` while it
 synthesizes and removes it afterwards. Keep the archive's dependencies listed in `app/agent/pyproject.toml` too.
 
-Try the deployed agent with `agentcore invoke --runtime agent --payload '{"prompt": "..."}'`. The terminal chat only
-talks to `agentcore dev`. Deleting the stack keeps a final snapshot of the database.
+Deleting the stack keeps a final snapshot of the database.
+
+Talk to the deployed agent with the terminal chat (needs boto3, which the archive's `.venv` has):
+```
+cd TranscriptAgent/cli
+../../public_meeting_transcript_archive/.venv/bin/python chat.py --deployed
+```
+or send one request with `agentcore invoke --runtime agent --payload '{"prompt": "..."}' --session-id <33+ characters>`.
+Logs: `agentcore logs runtime --name agent --since 15m`.
 
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
@@ -116,10 +135,18 @@ Comprehend has a size limit, so transcripts are split into chunks of up to 5,000
 separately.
 
 ### Unsupported or corrupted audio
-Only MP3 and WAV recordings are accepted. The agent hands out a one-hour presigned S3 upload link (the CLI uploads
-the file to it by itself), and other file types are refused before a link is made. Empty files and files over
-500 MB are refused when the upload is attached to a meeting. A corrupted file makes the Transcribe job fail, which is
-handled as a Transcribe failure.
+Only MP3 and WAV recordings are accepted. The agent hands out a one-hour signed S3 upload form (a presigned POST; the
+CLI uploads the file with it by itself), and other file types are refused before a form is made. The form's signature
+limits the file to 1 byte–500 MB and the matching audio type, so S3 itself refuses anything else before storing it.
+Attaching checks the size again. A corrupted file makes the Transcribe job fail, which is handled as a Transcribe
+failure.
+
+### Where uploads go
+Uploads land in `uploads/` in the bucket. Attaching one to a meeting copies it into `audio/` under a new name of its
+own, where recordings are kept. Anything still in `uploads/` (a cancelled, rejected or never-attached upload) is
+deleted after a day by an S3 lifecycle rule on the bucket (Management → Lifecycle rules: prefix `uploads/`, expire
+current versions after 1 day), so nothing piles up. If attaching fails, the upload stays in `uploads/` until then, so
+attaching again still works.
 
 ### No speech detected
 A finished job with an empty transcript is a valid result, not an error: it is stored as "No audio was detected." and

@@ -5,9 +5,7 @@ to the agent as its own request, and leftover lines would answer the next confir
 """
 import sys
 import time
-
 PASTE_SETTLE_SECONDS = 0.05  # long enough for the rest of a paste to arrive, too short to notice when typing
-
 try:
     if sys.platform == "win32":
         import msvcrt
