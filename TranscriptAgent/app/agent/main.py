@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import uuid
@@ -8,8 +7,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from graph import AgentContext, build_graph, close_dangling_tool_calls
-from memory import make_long_term_memory
+from graph import build_graph, close_dangling_tool_calls
 from model.load import load_model
 from parse import parse_payload
 
@@ -30,10 +28,7 @@ def _make_checkpointer():
 
 
 graph = build_graph(load_model(), _make_checkpointer())
-long_term_memory = make_long_term_memory(MEMORY_ID)
-# Recording a turn in long-term memory runs after the response, so keep the tasks until they finish
-_pending_records: set[asyncio.Task] = set()
-log = logging.getLogger("bedrock_agentcore.app")  # the AgentCore app's own logger
+log =logging.getLogger("bedrock_agentcore.app")  # the AgentCore app's own logger
 
 
 def _event(node: str, message) -> dict:
@@ -62,11 +57,11 @@ def _session_id(context) -> str:
     return getattr(context, "session_id", None) or f"local-{uuid.uuid4().hex}"
 
 
-async def handle_request(payload, context, graph=graph, memory=long_term_memory):
+async def handle_request(payload, context, graph=graph):
     """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards."""
     session_id = _session_id(context)
     try:
-        async for event in run_turn(payload, session_id, graph=graph, memory=memory):
+        async for event in run_turn(payload, session_id, graph=graph):
             yield event
     finally:
         if not getattr(context, "session_id", None):
@@ -76,15 +71,8 @@ async def handle_request(payload, context, graph=graph, memory=long_term_memory)
                 log.warning("Couldn't drop the one-off session %s", session_id, exc_info=True)
 
 
-def _record_later(memory, actor_id: str, session_id: str, messages: list) -> None:
-    if memory and messages:
-        task = asyncio.create_task(memory.record(actor_id, session_id, messages))
-        _pending_records.add(task)
-        task.add_done_callback(_pending_records.discard)
-
-
-async def run_turn(payload, session_id: str, graph=graph, memory=long_term_memory):
-    """Stream the events of one request in a session; memory is None when long-term memory is off."""
+async def run_turn(payload, session_id: str, graph=graph):
+    """Stream the events of one request in a session."""
     try:
         prompt, actor_id = parse_payload(payload)
     except ValueError as e:
@@ -95,7 +83,6 @@ async def run_turn(payload, session_id: str, graph=graph, memory=long_term_memor
     config = {"configurable": {"thread_id": session_id, "actor_id": actor_id}, "recursion_limit": 50}
 
     state = await graph.aget_state(config)
-    turn = []  # what this request adds to the conversation, for long-term memory
     if state.interrupts:
         # A paused confirmation takes an explicit "confirm": true/false, or this message, as its answer
         answer = payload.get("confirm", prompt)
@@ -113,34 +100,14 @@ async def run_turn(payload, session_id: str, graph=graph, memory=long_term_memor
         # Close tool calls a cut-off request left unanswered, or Bedrock rejects the history from now on
         dangling = close_dangling_tool_calls(state.values.get("messages", []))
         graph_input = {"messages": [*dangling, HumanMessage(prompt)]}
-        turn.append(HumanMessage(prompt))
 
-    try:
-        async for event in _stream(graph, graph_input, config, memory, actor_id, session_id, turn):
-            yield event
-    finally:
-        # Also when the client cut the stream off: record what this turn got as far as
-        _record_later(memory, actor_id, session_id, turn)
-
-
-async def _stream(graph, graph_input, config, memory, actor_id: str, session_id: str, turn: list):
-    """The graph's events for one request, with remembered background; adds the agent's messages to turn."""
-    remembered = ""
-    if memory and turn:  # a new message, not the answer to a confirmation
-        try:
-            remembered = await memory.recall(actor_id, session_id, turn[0].text)
-        except Exception:
-            log.warning("Couldn't recall long-term memory", exc_info=True)
-
-    async for update in graph.astream(graph_input, config, stream_mode="updates", context=AgentContext(memory=remembered)):
+    async for update in graph.astream(graph_input, config, stream_mode="updates"):
         for node, data in update.items():
             if node == "__interrupt__":
                 for item in data:
                     yield {"node": "confirm", "type": "confirmation_required", **item.value}
                 continue
             for message in (data or {}).get("messages", []):
-                if message.type == "ai":
-                    turn.append(message)
                 yield _event(node, message)
                 transcript = _transcript_event(node, message)
                 if transcript:
