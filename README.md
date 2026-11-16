@@ -19,14 +19,14 @@ topics with Amazon Comprehend. The agent is a LangGraph graph running on Amazon 
 
 ### Settings
 The archive finds its database in one of two ways (`database_url()` in `meeting_transcript/config.py`):
-- `DATABASE_SECRET_ARN`: the ARN or name of a Secrets Manager secret holding `host`, `port`, `username`, `password` and
+- `DATABASE_SECRET_ID`: the ARN or name of a Secrets Manager secret holding `host`, `port`, `username`, `password` and
   `dbname` (an "RDS database" secret has these). The archive reads it at startup and connects with SSL, so the password
   is never written in a file. This is how the RDS dev database and the deployed agent connect.
 - `DATABASE_URL`: a full link, e.g. to a local Docker database. When it's set, it wins and the secret isn't read.
 
 Put these in `TranscriptAgent/agentcore/.env.local` (loaded by `agentcore dev`):
 ```
-DATABASE_SECRET_ARN=TranscriptionDBSecret
+DATABASE_SECRET_ID=TranscriptionDBSecret
 AWS_REGION=us-east-1
 MEETING_BUCKET_NAME=<your bucket>
 ```
@@ -34,12 +34,12 @@ MEETING_BUCKET_NAME=<your bucket>
 settings from your environment or from a `.env` at the repo root (which `meeting_transcript/config.py` loads), plus
 `DATABASE_TEST_URL` pointing at a separate database for the tests (a local one; the tests never use the secret):
 ```
-DATABASE_SECRET_ARN=TranscriptionDBSecret
+DATABASE_SECRET_ID=TranscriptionDBSecret
 DATABASE_TEST_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive_test
 AWS_REGION=us-east-1
 MEETING_BUCKET_NAME=<your bucket>
 ```
-To use a local database instead of RDS, replace `DATABASE_SECRET_ARN` in both files with
+To use a local database instead of RDS, replace `DATABASE_SECRET_ID` in both files with
 `DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/transcript_archive`.
 
 ### Create the database tables
@@ -75,7 +75,7 @@ creates:
 - a VPC with one NAT gateway; the runtime runs in its private subnets (pinned to the Availability Zones AgentCore
   supports in VPC mode)
 - PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, its credentials in Secrets Manager. The runtime gets
-  `DATABASE_SECRET_ARN` instead of `DATABASE_URL`
+  `DATABASE_SECRET_ID` instead of `DATABASE_URL`
 - the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted
 - the runtime's permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use)
 - a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change

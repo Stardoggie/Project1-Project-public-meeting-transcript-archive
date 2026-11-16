@@ -59,7 +59,7 @@ shown, so it never reads or retypes the text.
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `DATABASE_SECRET_ARN` | One of these two | ARN or name of the Secrets Manager secret with the database's host, port, username, password and dbname; read at startup (the deployed agent uses this) |
+| `DATABASE_SECRET_ID` | One of these two | ARN or name of the Secrets Manager secret with the database's host, port, username, password and dbname; read at startup (the deployed agent uses this) |
 | `DATABASE_URL` | One of these two | Postgres URL of the archive database; when set it is used instead of the secret |
 | `AWS_REGION` | Yes | Region for Transcribe, Comprehend, S3, Secrets Manager and AgentCore Memory |
 | `MEETING_BUCKET_NAME` | Yes | S3 bucket for recordings and Transcribe output |
@@ -86,7 +86,7 @@ The deployed runtime is set up in two places:
   IAM managed policy `meeting-transcript-archive` (`iam/policy.json` at the repo root is a copy of it). AgentCore adds
   `MEMORY_AGENTMEMORY_ID` itself.
 - `agentcore/cdk/lib/cdk-stack.ts`: creates the RDS database, the S3 bucket and the VPC the runtime runs in, and gives
-  the runtime `DATABASE_SECRET_ARN` (the database secret's ARN, never the password) and `MEETING_BUCKET_NAME`.
+  the runtime `DATABASE_SECRET_ID` (the database secret's ARN, never the password) and `MEETING_BUCKET_NAME`.
   See "Deploy" in the root README for everything the stack creates.
 
 Invoke the deployed Runtime with its native payload (session ids need at least 33 characters):

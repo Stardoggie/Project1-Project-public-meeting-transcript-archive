@@ -173,7 +173,7 @@ export class AgentCoreStack extends Stack {
       vpcSubnets: appSubnets,
       securityGroups: [migrateSecurityGroup],
       environment: {
-        DATABASE_SECRET_ARN: databaseSecret.secretArn,
+        DATABASE_SECRET_ID: databaseSecret.secretArn,
         MEETING_BUCKET_NAME: bucket.bucketName,
         MEETING_LOG_LEVEL: 'INFO',
       },
@@ -206,7 +206,7 @@ export class AgentCoreStack extends Stack {
     );
     runtime.grantRead(databaseSecret);
     runtime.addEnvironmentVariable('MEETING_BUCKET_NAME', bucket.bucketName);
-    runtime.addEnvironmentVariable('DATABASE_SECRET_ARN', databaseSecret.secretArn);
+    runtime.addEnvironmentVariable('DATABASE_SECRET_ID', databaseSecret.secretArn);
     // agentcore.json's networkConfig only takes literal subnet and security group IDs, so set VPC mode here
     const cfnRuntime = runtime.resource.node.defaultChild as bedrockagentcore.CfnRuntime;
     cfnRuntime.networkConfiguration = {

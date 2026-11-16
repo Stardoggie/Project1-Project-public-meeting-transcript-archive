@@ -15,15 +15,15 @@ BUCKET_NAME = os.environ["MEETING_BUCKET_NAME"]
 def database_url() -> str | URL:
     """
         DATABASE_URL when set (local dev, tests); otherwise the deployed database, built from the RDS secret
-        named by DATABASE_SECRET_ARN (the secret's ARN or name) so the password never sits in an environment variable
+        named by DATABASE_SECRET_ID (the secret's ARN or name) so the password never sits in an environment variable
     """
     if os.environ.get("DATABASE_URL"):
         return os.environ["DATABASE_URL"]
-    secret_arn = os.environ.get("DATABASE_SECRET_ARN")
-    if not secret_arn:
-        raise RuntimeError("Set DATABASE_URL, or DATABASE_SECRET_ARN for the deployed database")
+    secret_id = os.environ.get("DATABASE_SECRET_ID")
+    if not secret_id:
+        raise RuntimeError("Set DATABASE_URL, or DATABASE_SECRET_ID for the deployed database")
     secret = json.loads(
-        boto3.client("secretsmanager", region_name=AWS_REGION).get_secret_value(SecretId=secret_arn)["SecretString"]
+        boto3.client("secretsmanager", region_name=AWS_REGION).get_secret_value(SecretId=secret_id)["SecretString"]
     )
     return URL.create(
         "postgresql+psycopg",
