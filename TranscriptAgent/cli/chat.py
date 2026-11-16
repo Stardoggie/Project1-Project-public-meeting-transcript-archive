@@ -13,10 +13,8 @@ import re
 import sys
 import urllib.error
 import uuid
-
 from client import find_agent_url, invoke, put_file, summarize
 from console import ask, read_message
-
 ALLOWED_EXTENSIONS = {".mp3", ".wav"}
 MAX_BYTES = 500 * 1024 * 1024
 # Example paths in the style of this computer
@@ -44,24 +42,33 @@ WHOLE_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|~[\\/]).*\.\w+|\S+
 DRAGGED = re.compile(r"'((?:[^']|'')*)'")  # PowerShell's single quotes, where '' is an apostrophe
 URL = re.compile(r"https?://", re.IGNORECASE)
 UPLOAD_WORD = re.compile(r"^\s*/?upload\b[\s:,-]*", re.IGNORECASE)
+# Backticks or emphasis that may wrap a link, like `url` or **url**
+LINK_WRAPPER = r"(?:`|\*\*|\*|__|_)?"
 
 
 def new_session() -> str:
     return f"cli-{uuid.uuid4().hex}"  # AgentCore wants session ids of 33+ characters
 
 
+def _inner_text(match) -> str:
+    # **bold** fills group 1, `code` fills group 2
+    return match.group(1) or match.group(2)
+
+
 def plain(text: str) -> str:
     """Drop markdown bold/code markers so replies read cleanly in a terminal."""
-    return re.sub(r"\*\*(.+?)\*\*|`([^`]+)`", lambda m: m.group(1) or m.group(2), text)
+    return re.sub(r"\*\*(.+?)\*\*|`([^`]+)`", _inner_text, text)
 
 
 def without_link(text: str, url: str) -> str:
     """The text with every copy of the link (any query string) cut out, in case a reply repeats it despite the system
     prompt: a whole markdown link, or a bare one, with its backticks, emphasis or <> but not the punctuation after it."""
+    # the link without its query string, then anything up to (not including) the punctuation that ends a sentence
     link = re.escape(url.split("?", 1)[0]) + r"(?:[^\s<>()`*\[\]]*[^\s<>()`*\[\],.;:!?'\"])?"
-    wrap_open, wrap_close = r"(?:`|\*\*|\*|__|_)?", r"(?:`|\*\*|\*|__|_)?"
-    cut = re.sub(wrap_open + r"\[[^\]]*\]\(<?" + link + r">?\)" + wrap_close, "", text)
-    cut = re.sub(wrap_open + r"<?" + link + r">?" + wrap_close, "", cut)
+    markdown_link = LINK_WRAPPER + r"\[[^\]]*\]\(<?" + link + r">?\)" + LINK_WRAPPER
+    bare_link = LINK_WRAPPER + r"<?" + link + r">?" + LINK_WRAPPER
+    cut = re.sub(markdown_link, "", text)
+    cut = re.sub(bare_link, "", cut)
     if cut == text:
         return text.strip()
     cut = re.sub(r"[ \t]+([,.;:!?])", r"\1", cut)  # no space left before the punctuation after the link
@@ -73,7 +80,12 @@ def safe_filename(name: str) -> str:
 
 
 def _looks_like_path(text: str) -> bool:
-    return bool(AUDIO_END.search(text)) or (("\\" in text or "/" in text) and bool(os.path.splitext(text)[1]))
+    """True for something ending in .mp3/.wav, or with a folder separator and a file extension."""
+    if AUDIO_END.search(text):
+        return True
+    has_folder = "\\" in text or "/" in text
+    has_extension = bool(os.path.splitext(text)[1])
+    return has_folder and has_extension
 
 
 def _rest(text: str, start: int, end: int) -> str:
@@ -91,6 +103,24 @@ def local_path(path: str) -> str:
     return os.path.expanduser(path)
 
 
+def _opening_quotes(text: str) -> list[int]:
+    """Where a quoted path could start. A quote straight after a letter or digit is an apostrophe (Here's, mayor's),
+    not an opening quote."""
+    positions = []
+    for index, char in enumerate(text):
+        after_letter = index > 0 and text[index - 1].isalnum()
+        if char in "\"'" and not after_letter:
+            positions.append(index)
+    return positions
+
+
+def _closing_quotes(text: str, start: int, quote: str) -> list[int]:
+    """Every later copy of the quote, outermost first, so an apostrophe inside ('C:\\Recs\\Bob's.mp3') can't cut a
+    file name short."""
+    positions = [index for index in range(start, len(text)) if text[index] == quote]
+    return list(reversed(positions))
+
+
 def find_recording(line: str) -> tuple[str | None, str]:
     """Find a file path in what the user typed; returns (path, rest of the message), or (None, line) if there's none.
 
@@ -106,14 +136,12 @@ def find_recording(line: str) -> tuple[str | None, str]:
             candidate = dragged.group(1).replace("''", "'").strip()
             if os.path.isfile(local_path(candidate)) or _looks_like_path(candidate):
                 return candidate, _rest(text, dragged.start(), dragged.end())
-    # Try a quote at every position, so an apostrophe (Here's, mayor's) can't hide or swallow a quoted path; one
-    # straight after a letter or digit is an apostrophe, not an opening quote
-    for pos in (i for i, char in enumerate(text) if char in "\"'" and not (i and text[i - 1].isalnum())):
+    # Try a quote at every position, so an apostrophe (Here's, mayor's) can't hide or swallow a quoted path
+    for pos in _opening_quotes(text):
         match = QUOTED.match(text, pos)
         if not match:
             continue
-        # Later closing quotes too, outermost first, so an apostrophe inside ('C:\Recs\Bob's.mp3') can't cut a file short
-        for close in reversed([i for i in range(match.end(), len(text)) if text[i] == text[pos]]):
+        for close in _closing_quotes(text, match.end(), text[pos]):
             candidate = text[pos + 1:close].strip()
             if os.path.isfile(local_path(candidate)):
                 return candidate, _rest(text, pos, close + 1)
@@ -146,6 +174,11 @@ def check_recording(path: str) -> str | None:
     if size > MAX_BYTES:
         return f"That file is {size / 1024 / 1024:,.0f} MB; the limit is 500 MB."
     return None
+
+
+def said_yes(answer: str) -> bool:
+    """The answer to a [y/N] prompt: only y or yes agrees; Enter or anything else is no."""
+    return answer.strip().lower() in ("y", "yes")
 
 
 class Chat:
@@ -210,18 +243,20 @@ class Chat:
         """Answer a pending confirmation with a [y/N] prompt; Enter or anything but yes cancels."""
         while result and result["confirmation"]:
             question = result["confirmation"].replace(" Reply yes to continue or no to cancel.", "")
-            answer = ask(f"  {question} [y/N] ").strip().lower()
-            result = self.send({"confirm": answer in ("y", "yes")})
+            answer = ask(f"  {question} [y/N] ")
+            result = self.send({"confirm": said_yes(answer)})
         return result
 
     def finish_upload(self, url: str, audio_key: str | None = None) -> dict | None:
         """Upload the recording to the link the agent handed out, then have it attach and transcribe."""
-        path, self.pending_path = self.pending_path, None
+        path = self.pending_path
+        self.pending_path = None
         # A path from this message or the one before (e.g. answering "which meeting?") is used straight away; an
         # older one may belong to a request the user dropped, so check before sending it somewhere new
-        if path and self.turn - self.pending_turn > 1:
+        given_earlier = self.turn - self.pending_turn > 1
+        if path and given_earlier:
             answer = ask(f"  Upload {os.path.basename(path)} (the file you gave earlier) for this? [y/N] ")
-            if answer.strip().lower() not in ("y", "yes"):
+            if not said_yes(answer):
                 path = None
         while not path:
             answer = ask("  Path to the recording (type it or drag the file here; Enter to cancel): ").strip()
@@ -237,7 +272,8 @@ class Chat:
         # The link's name fixes the format Transcribe expects; if the agent guessed .mp3 for a .wav, get a matching one
         extension = os.path.splitext(path)[1].lower()
         if audio_key and not audio_key.lower().endswith(extension):
-            self.pending_path, self.pending_turn = path, self.turn
+            self.pending_path = path
+            self.pending_turn = self.turn
             return self.send({"prompt": f"The recording is actually named {os.path.basename(path)}; "
                                         "get an upload link for that name instead."})
         size_mb = os.path.getsize(path) / 1024 / 1024
@@ -261,7 +297,8 @@ class Chat:
             self.failed = True
             return
         # Kept until the agent hands out an upload link, even if it first asks which meeting it's for
-        self.pending_path, self.pending_turn = path, self.turn
+        self.pending_path = path
+        self.pending_turn = self.turn
         request = f"I want to upload a recording named {os.path.basename(path)}"
         if meeting:
             request += f" for this meeting: {meeting}"
@@ -291,7 +328,10 @@ class Chat:
         self.turn += 1
         # A file is handed over on a line of its own; a pasted block, a link or a command line that mentions a file
         # (like `curl -T file.mp3 https://...`) is text to send, not a recording to upload
-        path, rest = (None, line) if "\n" in line or URL.search(line) else find_recording(line)
+        if "\n" in line or URL.search(line):
+            path, rest = None, line
+        else:
+            path, rest = find_recording(line)
         if path:
             self.upload(path, rest)
         elif UPLOAD_WORD.fullmatch(line):
@@ -327,7 +367,6 @@ def main():
     parser.add_argument("--agent-url", help="agent endpoint (default: AGENT_URL, or a local agentcore dev)")
     parser.add_argument("--transcripts", default=".", metavar="DIR", help="where to save full transcripts")
     args = parser.parse_args()
-
     agent_url = args.agent_url or find_agent_url()
     if not agent_url:
         sys.exit("Can't find the agent. Start it with `agentcore dev` in TranscriptAgent/, or set AGENT_URL.")

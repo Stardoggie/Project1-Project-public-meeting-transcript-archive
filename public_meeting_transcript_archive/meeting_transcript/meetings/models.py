@@ -2,8 +2,6 @@ from pydantic import Field, BaseModel,ConfigDict
 from typing import Literal
 from datetime import date
 from meeting_transcript.analysis.models import entityDTO,phraseDTO
-
-
 Status= Literal["scheduled","recorded","transcribing","archived"]
 
 #the read models don't re-check the title length, so a row written before the rule (or by hand) can still be read

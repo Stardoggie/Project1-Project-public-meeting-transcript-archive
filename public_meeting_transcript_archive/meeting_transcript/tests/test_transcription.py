@@ -2,20 +2,15 @@ import io
 import json
 import threading
 import time
-
 import boto3
 import pytest
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
-
 from meeting_transcript.extensions import db
 from meeting_transcript.meetings.models_db import Meeting
 from meeting_transcript.transcription import service, store
-
 AUDIO_KEY = "audio/meeting-transcription-0123456789abcdef0123456789abcdef.mp3"
 JOB_NAME = "meeting-transcription-0123456789abcdef0123456789abcdef"
-
-
 NOT_FOUND = {"error": "not_found", "detail": "Meeting not found."}
 
 
@@ -33,7 +28,7 @@ def test_get_transcription_status(meeting, monkeypatch):
             return {
                 "TranscriptionJob": {
                     "TranscriptionJobName": TranscriptionJobName,
-                    "TranscriptionJobStatus": "IN_PROGRESS",
+                    "TranscriptionJobStatus": "IN_PROGRESS"
                 }
             }
     monkeypatch.setattr(
@@ -101,7 +96,7 @@ def _expect_missing(stubber):
         service_error_code="BadRequestException",
         service_message="The requested job couldn't be found. Check the job name and try your request again.",
         http_status_code=400,
-        expected_params={"TranscriptionJobName": JOB_NAME},
+        expected_params={"TranscriptionJobName": JOB_NAME}
     )
 
 
@@ -115,8 +110,8 @@ def _expect_start(stubber):
             "MediaFormat": "mp3",
             "Media": {"MediaFileUri": f"s3://{service.BUCKET_NAME}/{AUDIO_KEY}"},
             "OutputBucketName": service.BUCKET_NAME,
-            "OutputKey": f"transcripts/{JOB_NAME}.json",
-        },
+            "OutputKey": f"transcripts/{JOB_NAME}.json"
+        }
     )
 
 
@@ -324,7 +319,7 @@ def test_concurrent_start_conflict_reports_existing_job(attached, transcribe):
         "start_transcription_job",
         service_error_code="ConflictException",
         service_message="The requested job name already exists. Use a different job name.",
-        http_status_code=409,
+        http_status_code=409
     )
     _expect_get(transcribe, "IN_PROGRESS")
     assert service.start_transcription_job(attached) == {"job_name": JOB_NAME, "status": "IN_PROGRESS"}
@@ -358,7 +353,6 @@ class _CompletedTranscribe:
 def test_concurrent_checks_analyse_once(app, attached, monkeypatch):
     from meeting_transcript.analysis.store import add_entities_and_phrases
     from meeting_transcript.meetings.models_db import Entities
-
     body = json.dumps({"results": {"transcripts": [{"transcript": "The council approved the budget."}]}}).encode()
     monkeypatch.setattr(service, "get_transcribe_client", lambda: _CompletedTranscribe())
     monkeypatch.setattr(service, "get_object", lambda bucket, key: {"Body": io.BytesIO(body)})
@@ -378,7 +372,6 @@ def test_concurrent_checks_analyse_once(app, attached, monkeypatch):
             time.sleep(0.3)
         add_entities_and_phrases({"budget vote"}, {"springfield": 1}, meeting_id, job_key)
     monkeypatch.setattr(service, "comprehend_entities_and_phrases", analyse)
-
     assert service.get_transcription_job(attached)["status"] == "COMPLETED"
     other.join(timeout=10)
     assert not other.is_alive()
@@ -392,7 +385,6 @@ def test_concurrent_checks_analyse_once(app, attached, monkeypatch):
 def _analysis_that_runs(app, other_session_work, monkeypatch):
     """A comprehend fake that does other_session_work in another session mid-analysis, then stores its results."""
     from meeting_transcript.analysis.store import add_entities_and_phrases
-
     body = json.dumps({"results": {"transcripts": [{"transcript": "The council approved the budget."}]}}).encode()
     monkeypatch.setattr(service, "get_transcribe_client", lambda: _CompletedTranscribe())
     monkeypatch.setattr(service, "get_object", lambda bucket, key: {"Body": io.BytesIO(body)})
@@ -413,7 +405,6 @@ def _analysis_that_runs(app, other_session_work, monkeypatch):
 
 def test_deleting_a_meeting_during_analysis_succeeds_and_the_results_are_dropped(app, attached, monkeypatch):
     from meeting_transcript.meetings import store as meetings_store
-
     deleted = []
     stored = _analysis_that_runs(app, lambda meeting_id: deleted.append(meetings_store.delete_meeting(meeting_id)), monkeypatch)
     store.store_job_key(attached, JOB_NAME)
@@ -423,7 +414,6 @@ def test_deleting_a_meeting_during_analysis_succeeds_and_the_results_are_dropped
 
 def test_new_audio_during_analysis_doesnt_wait_and_drops_the_old_results(app, attached, governing_body, monkeypatch):
     from meeting_transcript.meetings.models_db import Entities
-
     stored = _analysis_that_runs(
         app, lambda meeting_id: store.attach_audio(OTHER_AUDIO_KEY, meeting_id=meeting_id, body_id=governing_body.id), monkeypatch)
     store.store_job_key(attached, JOB_NAME)
@@ -457,7 +447,6 @@ def test_attaching_to_the_wrong_body_releases_the_row(app, attached, governing_b
 
 def test_an_analysis_abandoned_by_a_dead_process_is_claimed_again_after_the_timeout(attached, monkeypatch):
     from datetime import datetime, timedelta, timezone
-
     body = json.dumps({"results": {"transcripts": [{"transcript": "Crash test."}]}}).encode()
     monkeypatch.setattr(service, "get_transcribe_client", lambda: _CompletedTranscribe())
     monkeypatch.setattr(service, "get_object", lambda bucket, key: {"Body": io.BytesIO(body)})
@@ -471,7 +460,6 @@ def test_an_analysis_abandoned_by_a_dead_process_is_claimed_again_after_the_time
     db.session.rollback()
     record = _meeting(attached)
     assert record.analysis_completed is False and record.analysis_claimed_at is not None
-
     # a fresh claim is still running as far as anyone can tell
     analysed = _fake_transcript(monkeypatch, "Crash test.")
     assert service.get_transcription_job(attached)["status"] == "ANALYZING" and analysed == []
@@ -484,7 +472,6 @@ def test_an_analysis_abandoned_by_a_dead_process_is_claimed_again_after_the_time
 
 def test_completed_is_reported_only_once_results_are_stored(attached, monkeypatch):
     from meeting_transcript.analysis.store import add_entities_and_phrases
-
     body = json.dumps({"results": {"transcripts": [{"transcript": "Stored."}]}}).encode()
     monkeypatch.setattr(service, "get_transcribe_client", lambda: _CompletedTranscribe())
     monkeypatch.setattr(service, "get_object", lambda bucket, key: {"Body": io.BytesIO(body)})

@@ -1,16 +1,13 @@
 import logging
 import os
 import uuid
-
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
-
 from graph import build_graph, close_dangling_tool_calls
 from model.load import load_model
 from parse import parse_payload
-
 MEMORY_ID = os.getenv("MEMORY_AGENTMEMORY_ID")
 # Tool results are only a peek at what a tool returned; the agent's own replies are never shortened
 MAX_TOOL_EVENT_CHARS = 2000
@@ -22,13 +19,12 @@ def _make_checkpointer():
     """AgentCore Memory when deployed (set by agentcore deploy), in-process memory for local dev."""
     if MEMORY_ID:
         from langgraph_checkpoint_aws import AgentCoreMemorySaver
-
         return AgentCoreMemorySaver(MEMORY_ID, region_name=os.getenv("AWS_REGION"))
     return InMemorySaver()
 
 
 graph = build_graph(load_model(), _make_checkpointer())
-log =logging.getLogger("bedrock_agentcore.app")  # the AgentCore app's own logger
+log = logging.getLogger("bedrock_agentcore.app")  # the AgentCore app's own logger
 
 
 def _event(node: str, message) -> dict:
@@ -71,6 +67,41 @@ async def handle_request(payload, context, graph=graph):
                 log.warning("Couldn't drop the one-off session %s", session_id, exc_info=True)
 
 
+def _answer_to_confirmation(payload: dict, prompt: str):
+    """What resumes a paused confirmation: an explicit "confirm": true/false, or else the typed message.
+    Returns (graph input, error); exactly one of them is None."""
+    answer = payload.get("confirm", prompt)
+    if answer is None or (isinstance(answer, str) and not answer.strip()):
+        return None, "a confirmation is waiting; send 'confirm' (true/false) or a 'prompt' reply"
+    return Command(resume=answer), None
+
+
+def _new_message(payload: dict, prompt: str, state):
+    """The graph input for a new message when no confirmation is waiting.
+    Returns (graph input, error); exactly one of them is None."""
+    if not prompt.strip():
+        if "confirm" in payload:
+            return None, "there is no confirmation waiting in this session"
+        return None, "payload must be a JSON object with a non-empty string 'prompt'"
+    # Close tool calls a cut-off request left unanswered, or Bedrock rejects the history from now on
+    dangling = close_dangling_tool_calls(state.values.get("messages", []))
+    return {"messages": [*dangling, HumanMessage(prompt)]}, None
+
+
+def _events_from(update: dict):
+    """The events a client sees for one step of the graph: messages, full transcripts and confirmation questions."""
+    for node, data in update.items():
+        if node == "__interrupt__":
+            for item in data:
+                yield {"node": "confirm", "type": "confirmation_required", **item.value}
+            continue
+        for message in (data or {}).get("messages", []):
+            yield _event(node, message)
+            transcript = _transcript_event(node, message)
+            if transcript:
+                yield transcript
+
+
 async def run_turn(payload, session_id: str, graph=graph):
     """Stream the events of one request in a session."""
     try:
@@ -78,40 +109,19 @@ async def run_turn(payload, session_id: str, graph=graph):
     except ValueError as e:
         yield {"error": str(e)}
         return
-
     log.info(f"Invoking with session_id={session_id} and actor_id={actor_id}")
     config = {"configurable": {"thread_id": session_id, "actor_id": actor_id}, "recursion_limit": 50}
-
     state = await graph.aget_state(config)
     if state.interrupts:
-        # A paused confirmation takes an explicit "confirm": true/false, or this message, as its answer
-        answer = payload.get("confirm", prompt)
-        if answer is None or (isinstance(answer, str) and not answer.strip()):
-            yield {"error": "a confirmation is waiting; send 'confirm' (true/false) or a 'prompt' reply"}
-            return
-        graph_input = Command(resume=answer)
+        graph_input, error = _answer_to_confirmation(payload, prompt)
     else:
-        if not prompt.strip():
-            if "confirm" in payload:
-                yield {"error": "there is no confirmation waiting in this session"}
-            else:
-                yield {"error": "payload must be a JSON object with a non-empty string 'prompt'"}
-            return
-        # Close tool calls a cut-off request left unanswered, or Bedrock rejects the history from now on
-        dangling = close_dangling_tool_calls(state.values.get("messages", []))
-        graph_input = {"messages": [*dangling, HumanMessage(prompt)]}
-
+        graph_input, error = _new_message(payload, prompt, state)
+    if error:
+        yield {"error": error}
+        return
     async for update in graph.astream(graph_input, config, stream_mode="updates"):
-        for node, data in update.items():
-            if node == "__interrupt__":
-                for item in data:
-                    yield {"node": "confirm", "type": "confirmation_required", **item.value}
-                continue
-            for message in (data or {}).get("messages", []):
-                yield _event(node, message)
-                transcript = _transcript_event(node, message)
-                if transcript:
-                    yield transcript
+        for event in _events_from(update):
+            yield event
 
 
 def create_app():

@@ -24,12 +24,10 @@ class Meeting(db.Model):
     body: Mapped["GoverningBody"] = relationship(
         back_populates="meetings"
     )
-
     entities: Mapped[list["Entities"]] = relationship(
         back_populates="meeting",
         cascade="all, delete-orphan"
     )
-
     keys: Mapped[list["KeyPhrases"]] = relationship(
         back_populates="meeting",
         cascade="all, delete-orphan"

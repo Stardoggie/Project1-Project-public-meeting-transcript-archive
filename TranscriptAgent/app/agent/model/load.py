@@ -1,5 +1,4 @@
 from langchain_aws import ChatBedrockConverse
-
 # The organization's SCP blocks global. inference profiles; us. ones are allowed
 MODEL_ID = "us.anthropic.claude-sonnet-5-5"
 # Room for long answers; full transcripts go straight to the user via show_full_transcript instead

@@ -1,11 +1,9 @@
 """Graph routing and the delete-confirmation interrupt, driven by a scripted fake chat model."""
 import asyncio
-
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
-
 import transcript_tools as t
 from graph import DECLINED, INTERRUPTED, build_graph, close_dangling_tool_calls, is_yes, needs_confirmation
 from meeting_transcript.extensions import db
@@ -14,7 +12,6 @@ from meeting_transcript.meetings.models_db import Meeting
 
 class ScriptedModel(FakeMessagesListChatModel):
     """Replies with the given messages in order; records what it was sent."""
-
     seen: list = []
 
     def bind_tools(self, tools, **kwargs):
@@ -76,13 +73,12 @@ def test_delete_pauses_until_yes_then_runs_confirmed():
     body = new_body()
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]),
-        AIMessage(content="Deleted."),
+        AIMessage(content="Deleted.")
     )
     _, state = run(graph, {"messages": [HumanMessage("delete it")]})
     assert state.interrupts and state.next == ("confirm",)
     assert f'delete governing body "Graph Test Council" (id {body["id"]}), which has no meetings.' in state.interrupts[0].value["question"]
     assert body_exists(body["id"])  # nothing runs while paused
-
     result, state = run(graph, Command(resume="yes"))
     tool_message = [m for m in result["messages"] if isinstance(m, ToolMessage)][-1]
     assert '"deleted": true' in tool_message.content
@@ -97,7 +93,7 @@ def test_delete_declined_keeps_data_and_tells_the_model():
     body = new_body()
     graph, model = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]),
-        AIMessage(content="Okay, kept it."),
+        AIMessage(content="Okay, kept it.")
     )
     run(graph, {"messages": [HumanMessage("delete it")]})
     result, state = run(graph, Command(resume="no"))
@@ -112,7 +108,7 @@ def test_model_setting_confirmed_itself_still_pauses():
     body = new_body()
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"], "confirmed": True})]),
-        AIMessage(content="unused"),
+        AIMessage(content="unused")
     )
     _, state = run(graph, {"messages": [HumanMessage("delete it, I already confirmed")]})
     assert state.interrupts and body_exists(body["id"])
@@ -122,7 +118,7 @@ def test_new_request_instead_of_answer_is_passed_to_the_model():
     body = new_body()
     graph, model = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]),
-        AIMessage(content="Here are the meetings."),
+        AIMessage(content="Here are the meetings.")
     )
     run(graph, {"messages": [HumanMessage("delete it")]})
     result, _ = run(graph, Command(resume="actually just list its meetings"))
@@ -135,7 +131,7 @@ def test_explicit_confirm_true_is_accepted():
     body = new_body()
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]),
-        AIMessage(content="Deleted."),
+        AIMessage(content="Deleted.")
     )
     run(graph, {"messages": [HumanMessage("delete it")]})
     run(graph, Command(resume=True))
@@ -162,7 +158,7 @@ def test_only_a_plain_yes_confirms():
     for reply in [
         "y", "ok", "OK.", "okay", "sure", "do it", "go ahead", "confirm", "confirmed", "proceed", "yeah", "yep",
         "yes please", "Yes, but only the first one", "ok, what exactly does that remove?", "sure? wait no",
-        "yes delete meeting 6 instead", "Do it later", "yes?", "no", "", None, 1, "false", False,
+        "yes delete meeting 6 instead", "Do it later", "yes?", "no", "", None, 1, "false", False
     ]:
         assert not is_yes(reply), reply
 
@@ -172,9 +168,9 @@ def test_partial_yes_runs_nothing_and_becomes_a_new_request():
     graph, model = make_graph(
         AIMessage(content="", tool_calls=[
             call("delete_governing_body", {"body_id": first["id"]}, "call-1"),
-            call("delete_governing_body", {"body_id": second["id"]}, "call-2"),
+            call("delete_governing_body", {"body_id": second["id"]}, "call-2")
         ]),
-        AIMessage(content="Which one should I delete?"),
+        AIMessage(content="Which one should I delete?")
     )
     run(graph, {"messages": [HumanMessage("delete both")]})
     reply = "Yes, but only the first one, keep the second"
@@ -187,7 +183,7 @@ def test_partial_yes_runs_nothing_and_becomes_a_new_request():
 def test_cut_off_request_leaves_a_history_bedrock_accepts():
     graph, model = make_graph(
         AIMessage(content="", tool_calls=[call("list_governing_bodies", {})]),
-        AIMessage(content="Hello again."),
+        AIMessage(content="Hello again.")
     )
     config = {"configurable": {"thread_id": "t1"}}
 
@@ -200,7 +196,6 @@ def test_cut_off_request_leaves_a_history_bedrock_accepts():
     messages = graph.get_state(config).values["messages"]
     dangling = close_dangling_tool_calls(messages)
     assert [(m.tool_call_id, m.content) for m in dangling] == [("call-1", INTERRUPTED)]
-
     # main.py sends the closing results with the next message, as here
     asyncio.run(graph.ainvoke({"messages": [*dangling, HumanMessage("hello again")]}, config))
     seen = model.seen[-1]
@@ -231,7 +226,7 @@ def test_full_transcript_goes_to_the_user_not_the_model():
     meeting_id = transcribed_meeting(text)
     graph, model = make_graph(
         AIMessage(content="", tool_calls=[call("show_full_transcript", {"meeting_id": meeting_id})]),
-        AIMessage(content="Here's the full transcript of Long Hearing."),
+        AIMessage(content="Here's the full transcript of Long Hearing.")
     )
     result, _ = run(graph, {"messages": [HumanMessage("show me the full transcript")]})
     shown = [m for m in result["messages"] if isinstance(m, ToolMessage) and m.name == "show_full_transcript"][-1]
@@ -252,7 +247,6 @@ def test_full_transcript_without_one_says_so():
 
 def test_replies_are_not_shortened_but_tool_peeks_are():
     import main
-
     long_reply = "x" * 20_000
     assert main._event("agent", AIMessage(content=long_reply))["text"] == long_reply
     assert len(main._event("tools", ToolMessage(content="y" * 5000, name="get_meeting", tool_call_id="c"))["text"]) == 2000
@@ -265,7 +259,6 @@ def test_replies_are_not_shortened_but_tool_peeks_are():
 
 def test_upload_links_are_never_trimmed():
     import main
-
     link = '{"upload_url": "https://s3/' + "x" * 3000 + '", "audio_key": "audio/k.mp3", "method": "PUT"}'
     event = main._event("tools", ToolMessage(content=link, name="request_audio_upload", tool_call_id="c"))
     assert event["text"] == link
@@ -294,15 +287,14 @@ def test_confirmation_names_what_goes_and_the_result_says_what_went():
     t.create_meeting.invoke({"body_id": body["id"], "title": "Zoning Review", "meeting_date": "2026-10-27"})
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": first["id"]})]),
-        AIMessage(content="Deleted."),
+        AIMessage(content="Deleted.")
     )
     _, state = run(graph, {"messages": [HumanMessage("delete the budget hearing")]})
     question = state.interrupts[0].value["question"]
     assert f'delete meeting "Budget Hearing" on 2026-10-20 (Graph Test Council, id {first["id"]})' in question
-
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": body["id"]})]),
-        AIMessage(content="Deleted."),
+        AIMessage(content="Deleted.")
     )
     _, state = run(graph, {"messages": [HumanMessage("delete the council")]}, thread="t2")
     assert "and its 2 meetings" in state.interrupts[0].value["question"]
@@ -333,7 +325,6 @@ def test_requests_without_a_session_id_never_share_one():
 def test_a_messages_payload_is_told_to_send_a_prompt():
     from parse import parse_payload
     import pytest
-
     with pytest.raises(ValueError, match="send a 'prompt' string"):
         parse_payload({"messages": []})
     assert parse_payload({"prompt": "hi", "actorId": ""}) == ("hi", "default")
@@ -344,7 +335,7 @@ def test_a_string_id_with_confirmed_set_still_asks_first():
     t.create_meeting.invoke({"body_id": body["id"], "title": "Kept", "meeting_date": "2026-10-20"})
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_governing_body", {"body_id": str(body["id"]), "confirmed": True})]),
-        AIMessage(content="unused"),
+        AIMessage(content="unused")
     )
     _, state = run(graph, {"messages": [HumanMessage("delete it")]})
     assert state.interrupts and body_exists(body["id"])
@@ -353,7 +344,6 @@ def test_a_string_id_with_confirmed_set_still_asks_first():
 
 def test_a_failed_lookup_still_asks_first(monkeypatch):
     from sqlalchemy.exc import OperationalError
-
     body = new_body()
     meeting = t.create_meeting.invoke({"body_id": body["id"], "title": "Kept", "meeting_date": "2026-10-20"})
 
@@ -385,7 +375,7 @@ def test_the_model_can_never_run_a_delete_itself():
     graph, model = make_graph(
         AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": meeting["id"]})]),
         AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": meeting["id"]}, "call-2")]),
-        AIMessage(content="unused"),
+        AIMessage(content="unused")
     )
     run(graph, {"messages": [HumanMessage("delete it")]})
     _, state = run(graph, Command(resume="ok, go"))
@@ -415,7 +405,6 @@ def test_a_delete_that_loses_a_race_is_explained():
 def test_non_ascii_digits_are_invalid_and_never_break_the_turn():
     import asyncio as aio
     from graph import route_after_agent
-
     for value in ["²", "١٢", "1e3", "8.0", " "]:
         assert t.as_id(value) is None, value
     assert t.lookup_body("²") == ("invalid", None)
@@ -434,7 +423,7 @@ def test_float_ids_get_a_clear_invalid_id_from_the_delete_tools():
         assert result["error"] == "invalid_id" and "whole numbers" in result["detail"]
     graph, _ = make_graph(
         AIMessage(content="", tool_calls=[call("delete_meeting", {"meeting_id": float(meeting["id"])})]),
-        AIMessage(content="That id isn't valid."),
+        AIMessage(content="That id isn't valid.")
     )
     result, state = run(graph, {"messages": [HumanMessage("delete it")]})
     assert not state.interrupts and '"invalid_id"' in [m for m in result["messages"] if isinstance(m, ToolMessage)][-1].content

@@ -9,13 +9,13 @@ def test_comprehend_entities_and_phrases(monkeypatch):
                     {
                         "Text": "Houston",
                         "Type": "LOCATION",
-                        "Score": 0.99,
+                        "Score": 0.99
                     },
                     {
                         "Text": "John Smith",
                         "Type": "PERSON",
-                        "Score": 0.99,
-                    },
+                        "Score": 0.99
+                    }
                 ]
             }
 
@@ -24,7 +24,7 @@ def test_comprehend_entities_and_phrases(monkeypatch):
                 "KeyPhrases": [
                     {
                         "Text": "city council",
-                        "Score": 0.99,
+                        "Score": 0.99
                     }
                 ]
             }
@@ -33,12 +33,10 @@ def test_comprehend_entities_and_phrases(monkeypatch):
         "meeting_transcript.analysis.service.get_comprehend_client",
         lambda: FakeComprehendClient()
     )
-
     monkeypatch.setattr(
         "meeting_transcript.analysis.service.split_transcripton_chunk",
         lambda text: [text]
     )
-
     captured = {}
 
     def fake_add_entities_and_phrases(key_phrases, entities, meeting_id, job_key=None):
@@ -50,12 +48,10 @@ def test_comprehend_entities_and_phrases(monkeypatch):
         "meeting_transcript.analysis.service.add_entities_and_phrases",
         fake_add_entities_and_phrases
     )
-
     comprehend_entities_and_phrases(
         "The city council met in Houston with John Smith.",
         1
     )
-
     assert captured["meeting_id"] == 1
     assert captured["entities"]["houston"] == 1
     assert captured["entities"]["john smith"] == 1
@@ -67,7 +63,7 @@ class LongEntityComprehendClient:
         return {
             "Entities": [
                 {"Text": "B" * 151, "Type": "ORGANIZATION", "Score": 0.999},
-                {"Text": "Jane Doe", "Type": "PERSON", "Score": 0.999},
+                {"Text": "Jane Doe", "Type": "PERSON", "Score": 0.999}
             ]
         }
 
@@ -85,23 +81,18 @@ def test_comprehend_skips_entities_over_150_chars(monkeypatch):
         "meeting_transcript.analysis.service.add_entities_and_phrases",
         lambda key_phrases, entities, meeting_id, job_key=None: captured.update(entities=entities)
     )
-
     comprehend_entities_and_phrases("Jane Doe spoke.", 1)
-
     assert captured["entities"] == {"jane doe": 1}
 
 
 def test_comprehend_long_entity_is_stored_without_error(meeting, monkeypatch):
     from meeting_transcript.extensions import db
     from meeting_transcript.meetings.models_db import Entities, Meeting
-
     monkeypatch.setattr(
         "meeting_transcript.analysis.service.get_comprehend_client",
         lambda: LongEntityComprehendClient()
     )
-
     comprehend_entities_and_phrases("Jane Doe spoke.", meeting["id"])
-
     stored = db.session.query(Entities.entity).filter_by(meeting_id=meeting["id"]).all()
     assert [row.entity for row in stored] == ["jane doe"]
     assert db.session.get(Meeting, meeting["id"]).analysis_completed is True
@@ -109,11 +100,9 @@ def test_comprehend_long_entity_is_stored_without_error(meeting, monkeypatch):
 
 def test_key_phrase_search_escapes_like_wildcards(meeting, governing_body):
     from datetime import date
-
     from meeting_transcript.analysis.store import get_meeting_topic
     from meeting_transcript.extensions import db
     from meeting_transcript.meetings.models_db import KeyPhrases, Meeting
-
     other = Meeting(title="Other", meeting_date=date(2026, 9, 4), body_id=governing_body.id)
     db.session.add(other)
     db.session.flush()
@@ -121,7 +110,7 @@ def test_key_phrase_search_escapes_like_wildcards(meeting, governing_body):
         KeyPhrases(phrase="budget increase", meeting_id=meeting["id"]),
         KeyPhrases(phrase="a 5% tax", meeting_id=other.id),
         KeyPhrases(phrase="zoning_code update", meeting_id=other.id),
-        KeyPhrases(phrase="docs\\share folder", meeting_id=other.id),
+        KeyPhrases(phrase="docs\\share folder", meeting_id=other.id)
     ])
     db.session.commit()
 
@@ -158,7 +147,6 @@ class PaddedPhraseComprehendClient:
 def test_key_phrase_is_stored_stripped_and_lowercased(meeting, monkeypatch):
     from meeting_transcript.extensions import db
     from meeting_transcript.meetings.models_db import KeyPhrases
-
     # 150 chars once stripped, 152 with the padding
     core = "A" * 74 + " " + "B" * 75
     # 150 chars stripped, but lowercasing the dotted I makes it longer than 150
@@ -167,9 +155,7 @@ def test_key_phrase_is_stored_stripped_and_lowercased(meeting, monkeypatch):
         "meeting_transcript.analysis.service.get_comprehend_client",
         lambda: PaddedPhraseComprehendClient([" " + core + " ", grows, "  City Council  "])
     )
-
     comprehend_entities_and_phrases("text", meeting["id"])
-
     stored = sorted(row.phrase for row in db.session.query(KeyPhrases.phrase).filter_by(meeting_id=meeting["id"]))
     assert stored == sorted([core.lower(), "city council"])
 
@@ -178,9 +164,7 @@ def test_add_entities_and_phrases_skips_deleted_meeting(app):
     from meeting_transcript.analysis.store import add_entities_and_phrases
     from meeting_transcript.extensions import db
     from meeting_transcript.meetings.models_db import Entities, KeyPhrases
-
     add_entities_and_phrases({"city council"}, {"houston": 1}, 999999)
-
     assert db.session.query(Entities).filter_by(meeting_id=999999).count() == 0
     assert db.session.query(KeyPhrases).filter_by(meeting_id=999999).count() == 0
 

@@ -9,7 +9,6 @@ from datetime import datetime
 import logging
 from meeting_transcript.logging import log
 from meeting_transcript.analysis.models import entityDTO,phraseDTO
-
 statusAdapter = TypeAdapter(Status)
 logger = logging.getLogger(__name__)
 

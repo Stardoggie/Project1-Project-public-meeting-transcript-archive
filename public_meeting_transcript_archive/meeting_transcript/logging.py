@@ -8,7 +8,6 @@ def log(func):
     def wrapper(*args, **kwargs):
         message = f"calling {func.__name__}"
         logger.warning(message.upper())
-
         return func(*args, **kwargs)
     
     return wrapper

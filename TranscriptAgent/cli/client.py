@@ -3,7 +3,6 @@ import json
 import os
 import urllib.error
 import urllib.request
-
 # agentcore dev normally uses 8080 but moves to the next free port when 8080 is busy
 LOCAL_PORTS = range(8080, 8090)
 
@@ -27,7 +26,7 @@ def invoke(agent_url: str, session_id: str, payload: dict) -> list[dict]:
     request = urllib.request.Request(
         agent_url,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id},
+        headers={"Content-Type": "application/json", "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id}
     )
     events = []
     with urllib.request.urlopen(request, timeout=300) as response:
@@ -41,8 +40,16 @@ def invoke(agent_url: str, session_id: str, payload: dict) -> list[dict]:
 def summarize(events: list[dict]) -> dict:
     """Pull out what the CLI shows: replies and full transcripts (in order), tools used, a pending confirmation,
     an upload URL, errors."""
-    result = {"replies": [], "transcripts": [], "items": [], "tools": [], "confirmation": None, "upload_url": None,
-              "audio_key": None, "errors": []}
+    result = {
+        "replies": [],
+        "transcripts": [],
+        "items": [],
+        "tools": [],
+        "confirmation": None,
+        "upload_url": None,
+        "audio_key": None,
+        "errors": []
+    }
     for event in events:
         if event.get("error"):
             result["errors"].append(event["error"])
@@ -59,7 +66,8 @@ def summarize(events: list[dict]) -> dict:
         elif event.get("type") == "tool" and event.get("tool") == "request_audio_upload":
             try:
                 handed_out = json.loads(event["text"])
-                result["upload_url"], result["audio_key"] = handed_out.get("upload_url"), handed_out.get("audio_key")
+                result["upload_url"] = handed_out.get("upload_url")
+                result["audio_key"] = handed_out.get("audio_key")
             except (ValueError, AttributeError):
                 pass
     return result

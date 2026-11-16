@@ -1,6 +1,5 @@
 """Offline tests for the CLI's parsing and checks; no agent or AWS needed."""
 import pytest
-
 from chat import MAX_BYTES, Chat, check_recording, find_recording, plain, safe_filename
 from client import summarize
 
@@ -121,7 +120,7 @@ def test_summarize_keeps_replies_and_transcripts_in_order():
         {"type": "tool", "tool": "show_full_transcript", "text": "note"},
         {"type": "transcript", "title": "T", "meeting_date": "2026-11-10", "transcript": "full text"},
         {"type": "ai", "text": "Shown above."},
-        {"type": "confirmation_required", "question": "Please confirm: delete meeting 1."},
+        {"type": "confirmation_required", "question": "Please confirm: delete meeting 1."}
     ]
     result = summarize(events)
     assert [kind for kind, _ in result["items"]] == ["transcript", "reply"]
@@ -199,7 +198,6 @@ def test_new_conversation_forgets_the_file(recordings, monkeypatch):
 
 def test_a_pasted_block_is_read_as_one_message_and_prompts_ignore_leftovers(monkeypatch):
     import console
-
     pasted = iter(["Here is your link.", "", "curl.exe -X PUT ...", "`"])
     buffered = [True, True, True, False]  # three more lines waiting after the first, then nothing
     monkeypatch.setattr(console, "_interactive", lambda: True)
@@ -207,7 +205,6 @@ def test_a_pasted_block_is_read_as_one_message_and_prompts_ignore_leftovers(monk
     monkeypatch.setattr(console, "_waiting", lambda: buffered.pop(0))
     monkeypatch.setattr("builtins.input", lambda prompt="": next(pasted))
     assert console.read_message("archive> ") == "Here is your link.\n\ncurl.exe -X PUT ...\n`"
-
     discarded = []
     monkeypatch.setattr(console, "_discard", lambda: discarded.append(True))
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
@@ -238,7 +235,6 @@ def test_a_transcript_that_cant_be_saved_is_still_shown(tmp_path, capsys):
     chat.show_transcript({"title": "Budget Hearing", "meeting_date": "2026-01-05", "transcript": "Mayor: Hello."})
     out = capsys.readouterr().out
     assert "Mayor: Hello." in out and "Couldn't save the transcript to" in out
-
     chat = Chat("http://agent.invalid", str(tmp_path / "new folder"))
     chat.show_transcript({"title": "Budget Hearing", "meeting_date": "2026-01-05", "transcript": "Mayor: Hello."})
     assert (tmp_path / "new folder" / "Budget Hearing 2026-01-05.txt").read_text(encoding="utf-8") == "Mayor: Hello."
@@ -255,7 +251,6 @@ def test_bare_quit_only_as_the_whole_line():
 def test_upload_without_a_meeting_stays_to_answer(recordings, monkeypatch):
     import sys
     import chat as chat_module
-
     loops = []
     monkeypatch.setattr(chat_module, "find_agent_url", lambda: "http://agent.invalid")
     monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: None)  # the agent asks which meeting
@@ -263,7 +258,6 @@ def test_upload_without_a_meeting_stays_to_answer(recordings, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["chat.py", "--upload", recordings])
     chat_module.main()
     assert loops == [recordings]
-
     loops.clear()
     monkeypatch.setattr(sys, "argv", ["chat.py", "--upload", recordings, "--meeting", "Budget Hearing"])
     monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: setattr(self, "pending_path", None))
@@ -295,7 +289,6 @@ def test_a_bare_file_name_with_spaces(recordings, tmp_path):
 def test_a_path_under_the_home_folder_is_expanded(tmp_path, monkeypatch):
     import sys
     import chat as chat_module
-
     (tmp_path / "Music").mkdir()
     real = tmp_path / "Music" / "hearing.mp3"
     real.write_bytes(b"ID3")
@@ -304,18 +297,15 @@ def test_a_path_under_the_home_folder_is_expanded(tmp_path, monkeypatch):
     typed = "~\\Music\\hearing.mp3"
     assert find_recording(f"{typed} for zoning") == (typed, "for zoning")
     assert find_recording(f'"{typed}"') == (typed, "")
-
     chat = FakeChat([UPLOAD_EVENTS, ATTACHED_EVENTS])
     monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
     chat.handle(f"{typed} for zoning")
     assert chat.uploaded == [str(real)] and "named hearing.mp3 for this meeting: for zoning" in chat.sent[0]["prompt"]
-
     chat = FakeChat([UPLOAD_EVENTS, ATTACHED_EVENTS])
     monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
     monkeypatch.setattr("builtins.input", lambda prompt: typed)
     chat.handle("I want to add a recording to the zoning meeting")
     assert chat.uploaded == [str(real)]
-
     pending = []
     monkeypatch.setattr(chat_module, "find_agent_url", lambda: "http://agent.invalid")
     monkeypatch.setattr(chat_module.Chat, "send", lambda self, payload: None)
@@ -343,7 +333,6 @@ def test_end_of_input_at_a_prompt_cancels_without_a_traceback(recordings, monkey
     chat = FakeChat([[{"type": "ai", "text": "Cancelled."}]])
     chat.confirm(summarize(confirmation))
     assert chat.sent == [{"confirm": False}]
-
     chat = FakeChat([UPLOAD_EVENTS])  # the path prompt ends too: nothing is uploaded
     monkeypatch.setattr("chat.put_file", lambda url, path: chat.uploaded.append(path) or 200)
     chat.handle("I want to add a recording to the zoning meeting")
@@ -410,14 +399,12 @@ def test_a_one_off_request_that_fails_exits_non_zero(monkeypatch):
     with pytest.raises(SystemExit) as exited:
         chat_module.main()
     assert exited.value.code == 1
-
     monkeypatch.setattr(chat_module, "invoke", lambda url, session, payload: [{"type": "ai", "text": "None yet."}])
     chat_module.main()  # a request that gets through exits normally
 
 
 def test_link_wrappers_go_with_the_link_and_punctuation_stays():
     from chat import without_link
-
     url = "https://s3/put?X-Amz-Signature=abc"
     assert without_link(f"Upload to `{url}`, then tell me.", url) == "Upload to, then tell me."
     assert without_link(f"Use **{url}**. Done", url) == "Use. Done"
@@ -431,7 +418,6 @@ def test_upload_exits_non_zero_when_it_cant_go_ahead(tmp_path, monkeypatch, caps
     import sys
     import urllib.error
     import chat as chat_module
-
     good = tmp_path / "hearing.mp3"
     good.write_bytes(b"ID3")
     notes = tmp_path / "notes.txt"

@@ -4,8 +4,6 @@ from meeting_transcript.extensions import db
 from meeting_transcript.config import AppSettings
 import logging
 import os
-
-
 migrate = Migrate()
 
 
@@ -19,9 +17,8 @@ class JsonFormatter(logging.Formatter):
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": record.getMessage()
         }
-
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_entry)
@@ -32,7 +29,6 @@ def configure_logging() -> None:
     """
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
-
     app_logger = logging.getLogger("meeting_transcript")
     app_logger.setLevel(AppSettings().log_level)
     app_logger.handlers.clear()

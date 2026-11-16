@@ -29,7 +29,6 @@ def list_body(body_id:int) -> governingBody | None:
     valid_body = db.session.get(GoverningBody,body_id)
     if valid_body is None:
         return None
-
     return governingBody.model_validate(valid_body)
 
 
