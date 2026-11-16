@@ -1,7 +1,7 @@
 from flask import Flask,json
 from flask_migrate import Migrate
 from meeting_transcript.extensions import db
-from meeting_transcript.config import AppSettings
+from meeting_transcript.config import AppSettings,database_url
 import logging
 import os
 migrate = Migrate()
@@ -43,7 +43,7 @@ def create_app():
     '''
     configure_logging()
     app = Flask(__name__)
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url()
     db.init_app(app)#initilizing db with flask
     migrate.init_app(app,db)#helps manage connection to db
     app.logger.info("Public Meeting Transcript Archive app created")
