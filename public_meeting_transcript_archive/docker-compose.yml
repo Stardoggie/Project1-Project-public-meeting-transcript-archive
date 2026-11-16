@@ -2,6 +2,8 @@ services:
   # optional local postgres; the agent itself runs with agentcore dev, not in docker
   db:
     image: postgres:16
+    # comes back after a reboot or Docker restart, until you stop it with `docker compose stop`
+    restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: root
       POSTGRES_DB: transcript_archive

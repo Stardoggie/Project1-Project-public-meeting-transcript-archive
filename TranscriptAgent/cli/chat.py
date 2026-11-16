@@ -19,13 +19,17 @@ from console import ask, read_message
 
 ALLOWED_EXTENSIONS = {".mp3", ".wav"}
 MAX_BYTES = 500 * 1024 * 1024
-HELP = """Type a question or request, e.g. "What meetings does Springfield City Council have?"
+# Example paths in the style of this computer
+RECORDINGS = "C:\\Recordings" if os.name == "nt" else "~/Recordings"
+MY_RECORDINGS = "C:\\My Recordings" if os.name == "nt" else "~/My Recordings"
+SEP = os.sep
+HELP = f"""Type a question or request, e.g. "What meetings does Springfield City Council have?"
 
 To add a recording, give it the file's path, by typing it or dragging the file into this window. It uploads the
 file and starts transcription. Say which meeting it's for in the same message or earlier in the chat; otherwise
 the agent asks:
-  C:\\Recordings\\hearing.mp3 Budget Hearing, Springfield City Council
-  "C:\\My Recordings\\hearing.wav" is for the zoning meeting
+  {RECORDINGS}{SEP}hearing.mp3 Budget Hearing, Springfield City Council
+  "{MY_RECORDINGS}{SEP}hearing.wav" is for the zoning meeting
 
   /new    start a new conversation
   /help   show this help
@@ -266,7 +270,7 @@ class Chat:
         if path:
             self.upload(path, rest)
         elif UPLOAD_WORD.fullmatch(line):
-            print("  Give it the recording's path, e.g. C:\\Recordings\\hearing.mp3 Budget Hearing")
+            print(f"  Give it the recording's path, e.g. {RECORDINGS}{SEP}hearing.mp3 Budget Hearing")
         else:
             self.send({"prompt": line})
         return True

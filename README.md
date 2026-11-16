@@ -48,14 +48,16 @@ Then chat with it from another, using the terminal chat (see `TranscriptAgent/cl
 ```
 cd TranscriptAgent/cli
 python chat.py
-archive> C:\Recordings\hearing.mp3 Budget Hearing, Springfield City Council
+archive> C:\Recordings\hearing.mp3 Budget Hearing, Springfield City Council     (Windows)
+archive> ~/Recordings/hearing.mp3 Budget Hearing, Springfield City Council       (Linux/macOS)
 ```
+On Linux and macOS, use `python3` if `python` isn't found.
 Other clients can send prompts to `POST http://localhost:8080/invocations` with `{"prompt": "..."}` and the header
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation).
 
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
-- Agent graph: `pytest tests` in `TranscriptAgent/app/agent/`
+- Agent graph: `uv run pytest tests` in `TranscriptAgent/app/agent/` (pytest is in its `dev` dependency group, which `uv sync` installs)
 
 Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
 

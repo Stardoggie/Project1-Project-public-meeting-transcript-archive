@@ -25,3 +25,8 @@ packages = ["."]
 
 [tool.uv.sources]
 public-meeting-transcript-archive = { path = "../../../public_meeting_transcript_archive" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
