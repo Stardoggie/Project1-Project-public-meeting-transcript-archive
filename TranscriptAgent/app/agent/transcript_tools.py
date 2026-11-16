@@ -372,7 +372,7 @@ def attach_uploaded_audio(body_id: int, meeting_id: int, audio_key: str) -> dict
         _delete_from_s3(s3, audio_key)  # it can never be used, so don't keep it
         return {"error": "invalid_size", "detail": f"File is {size} bytes; must be 1 byte to 500 MB."}
     # Keep the recording for good in audio/; anything still in uploads/ is deleted by the lifecycle rule
-    stored_key = AUDIO_PREFIX + audio_key[len(UPLOAD_PREFIX):]
+    stored_key = _new_audio_key(audio_key)
     try:
         s3.copy_object(Bucket=BUCKET_NAME, Key=stored_key, CopySource={"Bucket": BUCKET_NAME, "Key": audio_key})
     except Exception:
@@ -388,6 +388,13 @@ def attach_uploaded_audio(body_id: int, meeting_id: int, audio_key: str) -> dict
         return _not_found(result, "meeting")
     _delete_from_s3(s3, audio_key)
     return result
+
+
+def _new_audio_key(upload_key: str) -> str:
+    """A new name in audio/ for each attach, so two attaches of one upload never share (or delete) the same copy.
+    It keeps the upload's .mp3 or .wav, since Transcribe reads the format from it."""
+    extension = upload_key.rsplit(".", 1)[-1]
+    return f"{AUDIO_PREFIX}meeting-transcription-{uuid.uuid4().hex}.{extension}"
 
 
 def _delete_from_s3(s3, key: str):
