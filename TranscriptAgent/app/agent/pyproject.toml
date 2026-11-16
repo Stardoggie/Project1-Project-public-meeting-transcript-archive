@@ -17,16 +17,35 @@ dependencies = [
     "langgraph~=1.2.11",
     "langgraph-checkpoint-aws>=1.2.6",
     "opentelemetry-instrumentation-langchain~=0.62.3",
-    "public-meeting-transcript-archive",
+    # The archive library's own dependencies. The deploy packager installs wheels only (`--only-binary :all:`),
+    # so it can't build the archive from its folder; agentcore/cdk/bin/cdk.ts copies its meeting_transcript
+    # package into this directory while it synthesizes instead. Keep this list in step with
+    # public_meeting_transcript_archive/pyproject.toml.
+    "flask>=3.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy>=2.0",
+    "flask-sqlalchemy>=3.1",
+    "flask-migrate>=4.0",
+    "psycopg[binary]>=3.1",
+    "python-dotenv>=1.0",
+    "boto3>=1.34",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
+[tool.uv]
+# `uv sync` / `uv run` (and so `agentcore dev` and the tests) install the archive from its folder, editable
+default-groups = ["dev", "archive"]
+
 [tool.uv.sources]
-public-meeting-transcript-archive = { path = "../../../public_meeting_transcript_archive" }
+public-meeting-transcript-archive = { path = "../../../public_meeting_transcript_archive", editable = true }
 
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
+]
+archive = [
+    "public-meeting-transcript-archive",
 ]

@@ -56,6 +56,26 @@ Other clients can send prompts to `POST http://localhost:8080/invocations` with 
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation; a request without it
 starts a new conversation of its own).
 
+## Deploy
+`agentcore deploy` in `TranscriptAgent/` deploys the stack in `TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts` to the
+target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the runtime and its Memory it
+creates:
+- a VPC with one NAT gateway; the runtime runs in its private subnets (pinned to the Availability Zones AgentCore
+  supports in VPC mode)
+- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, its credentials in Secrets Manager. The runtime gets
+  `DATABASE_SECRET_ARN` instead of `DATABASE_URL`
+- the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted
+- the runtime's permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use)
+- a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change
+- the web front end on CloudFront, with Cognito sign-in (see `TranscriptAgent/web/README.md`, which also has the
+  command for adding users). Its address is the stack's `SiteUrl` output
+
+The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` while it
+synthesizes and removes it afterwards. Keep the archive's dependencies listed in `app/agent/pyproject.toml` too.
+
+Try the deployed agent with `agentcore invoke --runtime agent --payload '{"prompt": "..."}'`. The terminal chat only
+talks to `agentcore dev`. Deleting the stack keeps a final snapshot of the database.
+
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
 - Agent graph: `uv run pytest tests` in `TranscriptAgent/app/agent/` (pytest is in its `dev` dependency group, which `uv sync` installs)
