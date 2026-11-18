@@ -20,6 +20,3 @@ agentcore/cdk/cdk.out/
 
 # AgentCore build staging
 agentcore/.cache/
-
-# Copied in from ../public_meeting_transcript_archive while agentcore/cdk synthesizes (see agentcore/cdk/bin/cdk.ts)
-app/agent/meeting_transcript/

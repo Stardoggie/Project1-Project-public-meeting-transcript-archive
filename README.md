@@ -72,26 +72,17 @@ Other clients can send prompts to `POST http://localhost:8080/invocations` with 
 starts a new conversation of its own).
 
 ## Deploy
-`agentcore deploy` in `TranscriptAgent/` deploys the stack in `TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts` to the
-target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the two runtimes (`agent` for
-clerks, `public_agent` for the web page) and the Memory it creates:
-- a VPC with one NAT gateway; the runtimes run in its private subnets (pinned to the Availability Zones AgentCore
-  supports in VPC mode)
-- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, its credentials in Secrets Manager. The runtimes get
-  `DATABASE_SECRET_ID` instead of `DATABASE_URL`
-- the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted. Uploads that
-  are never attached are deleted from `uploads/` after a day
-- `agent`'s permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use);
-  `public_agent` gets the secret but none of those. Only `agent` can use the Memory: AgentCore gives every runtime
-  access to it, so the stack takes it back from `public_agent`
-- a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change
-- the web front end on CloudFront (see `TranscriptAgent/web/README.md`). Its address is the stack's `SiteUrl`
-  output. It has no sign-in because it only talks to `public_agent`, which can only read the archive
+`agentcore deploy` in `TranscriptAgent/` deploys both agents to AgentCore Runtime (account and region in
+`agentcore/aws-targets.json`): `agent` for clerks and `public_agent` for the web page. The archive code is bundled
+with them. There is no stack code to write: the runtimes' settings are in `TranscriptAgent/agentcore/agentcore.json`
+(see the agent README), and they use the existing `TranscriptionDBSecret` secret and S3 bucket. Each runtime gets its
+own IAM managed policy:
+- `agent`: `meeting-transcript-archive` (copy in `iam/policy.json`): S3, Transcribe, Comprehend and the secret.
+- `public_agent`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret. It
+  also denies the clerks' Memory, since AgentCore gives every runtime access to it.
 
-The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` while it
-synthesizes and removes it afterwards. Keep the archive's dependencies listed in `app/agent/pyproject.toml` too.
-
-Deleting the stack keeps a final snapshot of the database.
+Both policies must exist before deploying. Before the first deploy, the RDS security group must allow port 5432 from
+anywhere, since the runtimes have no fixed address (SSL and the password still protect it).
 
 Clerks talk to the deployed `agent` with the terminal chat (needs boto3, which the archive's `.venv` has):
 ```

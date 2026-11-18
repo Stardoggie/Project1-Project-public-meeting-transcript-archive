@@ -13,6 +13,14 @@
       "protocol": "HTTP",
       "envVars": [
         {
+          "name": "DATABASE_SECRET_ID",
+          "value": "TranscriptionDBSecret"
+        },
+        {
+          "name": "MEETING_BUCKET_NAME",
+          "value": "lg-transcription-bucket"
+        },
+        {
           "name": "AWS_REGION",
           "value": "us-east-1"
         }
@@ -31,9 +39,20 @@
       "protocol": "HTTP",
       "envVars": [
         {
+          "name": "DATABASE_SECRET_ID",
+          "value": "TranscriptionDBSecret"
+        },
+        {
+          "name": "MEETING_BUCKET_NAME",
+          "value": "lg-transcription-bucket"
+        },
+        {
           "name": "AWS_REGION",
           "value": "us-east-1"
         }
+      ],
+      "additionalPolicies": [
+        "arn:aws:iam::397345411365:policy/meeting-transcript-public-agent"
       ]
     }
   ],

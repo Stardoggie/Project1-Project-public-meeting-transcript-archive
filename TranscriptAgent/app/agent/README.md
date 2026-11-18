@@ -96,16 +96,18 @@ Plain `agentcore dev` starts both runtimes: `agent` on 8080 and the read-only `p
 
 After providing credentials, `agentcore deploy` will deploy your project into Amazon Bedrock AgentCore.
 
-The deployed runtimes are set up in two places:
+The deployed runtimes are set up entirely in `agentcore/agentcore.json`; there is no CDK stack code:
 
-- `agentcore/agentcore.json`: both runtimes, with `AWS_REGION` in `envVars`. Only `agent` has `additionalPolicies`,
-  which attaches the existing IAM managed policy `meeting-transcript-archive` (`iam/policy.json` at the repo root is a
-  copy of it). AgentCore adds `MEMORY_AGENTMEMORY_ID` itself.
-- `agentcore/cdk/lib/cdk-stack.ts`: creates the RDS database, the S3 bucket and the VPC the runtimes run in, and gives
-  both `DATABASE_SECRET_ID` (the database secret's ARN, never the password) and `MEETING_BUCKET_NAME`. Only `agent`
-  gets the S3, Transcribe and Comprehend permissions. AgentCore gives every runtime the Memory (its
-  `MEMORY_AGENTMEMORY_*` variables and access to it); the stack takes that back from `public_agent`, which always
-  keeps conversations in memory instead. See "Deploy" in the root README for everything the stack creates.
+- `envVars` gives each runtime `DATABASE_SECRET_ID` (the secret's name, never the password), `MEETING_BUCKET_NAME`
+  and `AWS_REGION`. AgentCore adds `MEMORY_AGENTMEMORY_ID` itself, to both runtimes.
+- `additionalPolicies` attaches an existing IAM managed policy to each runtime: `meeting-transcript-archive` to
+  `agent` (S3 audio and transcripts, Transcribe, Comprehend, and reading the database secret; `iam/policy.json` at the
+  repo root is a copy of it), and `meeting-transcript-public-agent` to `public_agent` (only reading the secret, and a
+  deny on the clerks' Memory; copy in `iam/public-agent-policy.json`). `public_agent` always keeps conversations in
+  its own process memory, so it never uses the Memory anyway.
+
+The secret and both policies are made outside this project (in the AWS console) and must exist before deploying.
+The database's security group must allow port 5432 from the runtimes, which have no fixed address.
 
 To run the public agent locally, next to the clerks' one: `agentcore dev --agent public_agent --port 8090`.
 

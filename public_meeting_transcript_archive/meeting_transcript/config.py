@@ -1,40 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+from urllib.parse import quote
 import json
 import os
 import boto3
 from dotenv import load_dotenv
-from sqlalchemy.engine import URL
-
 load_dotenv()
-# AgentCore Runtime and Lambda may set only AWS_DEFAULT_REGION, so fall back to it and then to boto3's own lookup
-AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or boto3.Session().region_name
+AWS_REGION = os.environ["AWS_REGION"]
 BUCKET_NAME = os.environ["MEETING_BUCKET_NAME"]
-
-
-def database_url() -> str | URL:
-    """
-        DATABASE_URL when set (local dev, tests); otherwise the deployed database, built from the RDS secret
-        named by DATABASE_SECRET_ID (the secret's ARN or name) so the password never sits in an environment variable
-    """
-    if os.environ.get("DATABASE_URL"):
-        return os.environ["DATABASE_URL"]
-    secret_id = os.environ.get("DATABASE_SECRET_ID")
-    if not secret_id:
-        raise RuntimeError("Set DATABASE_URL, or DATABASE_SECRET_ID for the deployed database")
-    secret = json.loads(
-        boto3.client("secretsmanager", region_name=AWS_REGION).get_secret_value(SecretId=secret_id)["SecretString"]
-    )
-    return URL.create(
-        "postgresql+psycopg",
-        username=secret["username"],
-        password=secret["password"],
-        host=secret["host"],
-        port=int(secret.get("port", 5432)),
-        database=secret.get("dbname", "transcript_archive"),
-        # sslmode=require encrypts the connection
-        query={"sslmode": "require"},
-    )
 #app setting for logger
 class AppSettings(BaseSettings) :
     """
@@ -51,3 +24,23 @@ class AppSettings(BaseSettings) :
     default_page_size: int = 5
     log_level: str = "DEBUG"
 
+
+def database_url() -> str:
+    """
+        the database to connect to: DATABASE_URL when it is set (local .env, tests),
+        otherwise built from the secrets manager secret named in DATABASE_SECRET_ID (the deployed agent),
+        so the deployed password only ever lives in secrets manager
+    """
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    secret_id = os.environ.get("DATABASE_SECRET_ID")
+    if not secret_id:
+        raise RuntimeError("Set DATABASE_URL, or DATABASE_SECRET_ID to the name of the database's secret")
+    #read the host, port, user, password and database name stored in the secret
+    secrets = boto3.client("secretsmanager",region_name=AWS_REGION)
+    secret = json.loads(secrets.get_secret_value(SecretId=secret_id)["SecretString"])
+    user = quote(secret["username"],safe="")
+    password = quote(secret["password"],safe="")#escapes any character that would break the url
+    address = f"{secret['host']}:{secret.get('port',5432)}/{secret.get('dbname','transcript_archive')}"
+    #sslmode=require encrypts the connection
+    return f"postgresql+psycopg://{user}:{password}@{address}?sslmode=require"

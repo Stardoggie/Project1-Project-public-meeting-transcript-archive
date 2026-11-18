@@ -1,0 +1,23 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ReadDevDatabasePassword",
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret"
+            ],
+            "Resource": "arn:aws:secretsmanager:us-east-1:397345411365:secret:TranscriptionDBSecret-*"
+        },
+        {
+            "Sid": "NoClerkConversations",
+            "Effect": "Deny",
+            "Action": "bedrock-agentcore:*",
+            "Resource": [
+                "arn:aws:bedrock-agentcore:us-east-1:397345411365:memory/TranscriptAgent_default_agentMemory-*",
+                "arn:aws:bedrock-agentcore:us-east-1:397345411365:memory/TranscriptAgent_default_agentMemory-*/*"
+            ]
+        }
+    ]
+}
