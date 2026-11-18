@@ -10,20 +10,18 @@ import { Construct } from 'constructs';
 import * as path from 'path';
 
 export interface WebFrontendProps {
-  /** The agent runtime's ARN; the API function calls it. */
+  /** The public agent runtime's ARN; the API function calls it. */
   readonly runtimeArn: string;
-  /** The recordings bucket: the browser uploads to it directly, so it gets a CORS rule for the site. */
-  readonly meetingBucket: s3.Bucket;
   /** The folder holding index.html (TranscriptAgent/web). */
   readonly webDir: string;
 }
 
 /**
  * The hosted front end: TranscriptAgent/web/index.html on CloudFront, from a private bucket. /api/* goes to a streaming
- * Lambda (behind CloudFront origin access control) that calls the runtime.
+ * Lambda (behind CloudFront origin access control) that calls the public agent.
  *
- * There is no sign-in: anyone with the site's address can use the agent, including changing and deleting archive
- * records and uploading recordings.
+ * There is no sign-in, and none is needed: the public agent can only read the archive. Clerks manage meetings and
+ * recordings with the terminal chat, which calls the `agent` runtime with their own AWS credentials.
  */
 export class WebFrontend extends Construct {
   public readonly apiFunction: nodejs.NodejsFunction;
@@ -105,14 +103,6 @@ export class WebFrontend extends Construct {
       destinationBucket: siteBucket,
       distribution: this.distribution,
       distributionPaths: ['/*'],
-    });
-
-    // The page PUTs recordings straight to the upload link the agent hands out
-    props.meetingBucket.addCorsRule({
-      allowedMethods: [s3.HttpMethods.PUT],
-      allowedOrigins: [siteUrl],
-      allowedHeaders: ['*'],
-      maxAge: 3000,
     });
 
     new CfnOutput(stack, 'SiteUrl', { value: siteUrl });

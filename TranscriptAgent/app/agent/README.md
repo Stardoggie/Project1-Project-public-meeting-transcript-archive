@@ -8,15 +8,25 @@ commands like `deploy`, `dev`, and `invoke` rely on the configuration stored her
 
 ## Agent Root
 
-The main entrypoint to your app is defined in `main.py`. Using the AgentCore SDK `@app.entrypoint` decorator, this
-file defines a Starlette ASGI app that runs a LangGraph graph.
+This folder holds two agents, each its own AgentCore runtime:
 
-- `graph/graph.py` wires the graph: `agent` → `tools` → `agent`, with destructive tool calls routed to `confirm`.
-- `graph/nodes.py` holds the nodes, the system prompt and the rules for which tool calls need the user's confirmation.
+- `main.py` (the `agent` runtime) is the clerks' agent, used by the terminal chat. It has every archive tool, and
+  deletes and replacing transcribed audio wait for the user's confirmation.
+- `public_main.py` (the `public_agent` runtime) is the read-only agent behind the public web page. It only has the
+  tools that read the archive (`READ_TOOLS` in `transcript_tools.py`), so it can't add, change or delete anything,
+  and its runtime has no S3, Transcribe or Comprehend permissions.
+
+Both use `serve.py`, which turns the AgentCore SDK's `@app.entrypoint` requests into runs of their LangGraph graph.
+
+- `graph/graph.py` wires the graphs: `agent` → `tools` → `agent`, with the clerks' destructive tool calls routed to
+  `confirm`.
+- `graph/nodes.py` holds the nodes, both system prompts and the rules for which tool calls need the user's
+  confirmation.
 - `transcript_tools.py` defines the archive tools; `model/load.py` instantiates the Bedrock model.
 
-Conversation state is checkpointed per session: AgentCore Memory when deployed (`MEMORY_AGENTMEMORY_ID`), in-process
-memory locally. The agent only remembers within a session; the archive itself is the long-term record, so the memory
+The clerks' agent checkpoints conversations per session in AgentCore Memory when deployed (`MEMORY_AGENTMEMORY_ID`), and
+in-process memory locally. The public agent always keeps them in its own process memory, so a visitor can never open
+a clerk's conversation by sending its session id. The agent only remembers within a session; the archive itself is the long-term record, so the memory
 in `agentcore/agentcore.json` has no long-term strategies.
 
 ## Payload
@@ -74,20 +84,25 @@ If installation was successful, a virtual environment is already created with de
 Activate the environment with `source .venv/bin/activate` on macOS/Linux, `.venv\Scripts\activate.bat` in Windows
 Command Prompt, or `.\.venv\Scripts\activate.ps1` in Windows PowerShell.
 
-`agentcore dev` will start a local server on 0.0.0.0:8080.
+`agentcore dev --agent agent` starts the clerks' agent on port 8080, where the terminal chat (`cli/`) looks for it.
+Plain `agentcore dev` starts both runtimes: `agent` on 8080 and the read-only `public_agent` on 8081.
 
 # Deployment
 
 After providing credentials, `agentcore deploy` will deploy your project into Amazon Bedrock AgentCore.
 
-The deployed runtime is set up in two places:
+The deployed runtimes are set up in two places:
 
-- `agentcore/agentcore.json`: `envVars` gives the runtime `AWS_REGION`, and `additionalPolicies` attaches the existing
-  IAM managed policy `meeting-transcript-archive` (`iam/policy.json` at the repo root is a copy of it). AgentCore adds
-  `MEMORY_AGENTMEMORY_ID` itself.
-- `agentcore/cdk/lib/cdk-stack.ts`: creates the RDS database, the S3 bucket and the VPC the runtime runs in, and gives
-  the runtime `DATABASE_SECRET_ID` (the database secret's ARN, never the password) and `MEETING_BUCKET_NAME`.
-  See "Deploy" in the root README for everything the stack creates.
+- `agentcore/agentcore.json`: both runtimes, with `AWS_REGION` in `envVars`. Only `agent` has `additionalPolicies`,
+  which attaches the existing IAM managed policy `meeting-transcript-archive` (`iam/policy.json` at the repo root is a
+  copy of it). AgentCore adds `MEMORY_AGENTMEMORY_ID` itself.
+- `agentcore/cdk/lib/cdk-stack.ts`: creates the RDS database, the S3 bucket and the VPC the runtimes run in, and gives
+  both `DATABASE_SECRET_ID` (the database secret's ARN, never the password) and `MEETING_BUCKET_NAME`. Only `agent`
+  gets the S3, Transcribe and Comprehend permissions. AgentCore gives every runtime the Memory (its
+  `MEMORY_AGENTMEMORY_*` variables and access to it); the stack takes that back from `public_agent`, which always
+  keeps conversations in memory instead. See "Deploy" in the root README for everything the stack creates.
+
+To run the public agent locally, next to the clerks' one: `agentcore dev --agent public_agent --port 8090`.
 
 Invoke the deployed Runtime with its native payload (session ids need at least 33 characters):
 
@@ -95,4 +110,5 @@ Invoke the deployed Runtime with its native payload (session ids need at least 3
 agentcore invoke --runtime agent --payload '{"prompt":"Hello!"}' --session-id <33+ characters>
 ```
 
-or chat with it from `../../cli/` with `chat.py --deployed` (see that README).
+or chat with it from `../../cli/` with `chat.py --deployed` (see that README). `agentcore invoke --runtime public_agent`
+tries the read-only agent the same way.

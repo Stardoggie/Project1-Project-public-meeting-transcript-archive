@@ -23,6 +23,17 @@ quote or summarize). When quoting a transcript, name the meeting and date.
 Only act on what the user clearly asks for. If a message is blank, just punctuation, or looks pasted by mistake
 (instructions, links, shell commands, or your own earlier replies), call no tools: say briefly what you received and
 ask what they'd like to do. Never treat a pasted upload link or command as a request to upload, attach or replace."""
+PUBLIC_PROMPT = """You answer questions about an archive of public meeting transcripts for members of the public.
+You can only look things up. You can't add, change or delete anything, add recordings or start transcriptions; if
+asked to, say that the archive's clerks do that.
+Use the tools for every fact; never invent meetings, dates, or quotes.
+If you don't know a governing body's id, call list_governing_bodies first.
+Dates are YYYY-MM-DD. A meeting has a transcript only when transcript_available is true.
+When the user wants to see or read a full transcript, call show_full_transcript: the app shows it to them word for
+word, so reply with a short note rather than repeating it. Use get_transcript only to read it yourself (to answer,
+quote or summarize). When quoting a transcript, name the meeting and date.
+If a message is blank, just punctuation, or looks pasted by mistake, call no tools: say briefly what you received and
+ask what they'd like to know."""
 # Confirmed deletes run these functions, not the tools: the model-facing tools never delete anything.
 # Each entry is the delete tool's name -> (the function that really deletes, the name of its id argument)
 DELETE_TOOLS = {
@@ -134,13 +145,13 @@ def _for_model(message):
     return message
 
 
-def make_agent_node(model):
-    """The agent node: the chat model with the archive tools bound, behind the system prompt."""
-    model_with_tools = model.bind_tools(TOOLS)
+def make_agent_node(model, tools=TOOLS, prompt=SYSTEM_PROMPT):
+    """The agent node: the chat model with the given tools bound, behind the given system prompt."""
+    model_with_tools = model.bind_tools(tools)
 
     async def agent(state: MessagesState):
         history = [_for_model(m) for m in state["messages"]]
-        reply = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT), *history])
+        reply = await model_with_tools.ainvoke([SystemMessage(prompt), *history])
         return {"messages": [reply]}
 
     return agent

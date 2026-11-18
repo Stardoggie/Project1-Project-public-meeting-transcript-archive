@@ -19,8 +19,11 @@ export interface AgentCoreStackProps extends StackProps {
   application: AgentCoreApplicationProps;
 }
 
-/** The runtime declared in agentcore/agentcore.json. */
+/** The runtimes declared in agentcore/agentcore.json: the clerks' agent, and the read-only one the web page uses. */
 const RUNTIME_NAME = 'agent';
+const PUBLIC_RUNTIME_NAME = 'public_agent';
+/** The clerks' conversation Memory declared in agentcore/agentcore.json. Only `agent` may use it. */
+const MEMORY_NAME = 'agentMemory';
 
 /**
  * AgentCore Runtime only places VPC-mode runtimes in some Availability Zones, given as AZ IDs (AZ names map to
@@ -56,15 +59,16 @@ function hashTree(roots: string[]): string {
 
 /**
  * The stack the AgentCore CLI deploys. The AgentCoreApplication creates what agentcore/agentcore.json declares
- * (the `agent` runtime and its Memory); this stack adds what the archive needs around it:
+ * (the `agent` and `public_agent` runtimes and the Memory); this stack adds what the archive needs around them:
  *
- * - a VPC (public subnets with one NAT gateway, private subnets for the runtime and the migration Lambda,
- *   isolated subnets for the database), and the runtime switched to VPC mode
+ * - a VPC (public subnets with one NAT gateway, private subnets for the runtimes and the migration Lambda,
+ *   isolated subnets for the database), and both runtimes switched to VPC mode
  * - PostgreSQL on RDS, its credentials in Secrets Manager
  * - the S3 bucket for recordings (`audio/`) and Transcribe output (`transcripts/`)
- * - the runtime's permissions for S3, Transcribe, Comprehend and the database secret
+ * - the `agent` runtime's permissions for S3, Transcribe, Comprehend and the database secret; `public_agent` gets
+ *   the database secret but none of those, and is cut off from the Memory that AgentCoreApplication gives every runtime
  * - a custom resource that runs the archive's Alembic migrations inside the VPC on deploy
- * - the hosted front end (see web-frontend.ts)
+ * - the hosted front end (see web-frontend.ts), which only calls `public_agent`
  */
 export class AgentCoreStack extends Stack {
   public readonly application: AgentCoreApplication;
@@ -131,6 +135,8 @@ export class AgentCoreStack extends Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
+      // uploads that never get attached to a meeting are deleted after a day; attached ones are copied into audio/
+      lifecycleRules: [{ id: 'delete-unattached-uploads', prefix: 'uploads/', expiration: Duration.days(1) }],
     });
 
     // Migrations: `flask db upgrade` from a Lambda in the VPC, rerun whenever the archive code or migrations change
@@ -204,28 +210,46 @@ export class AgentCoreStack extends Stack {
         resources: ['*'],
       }),
     );
-    runtime.grantRead(databaseSecret);
-    runtime.addEnvironmentVariable('MEETING_BUCKET_NAME', bucket.bucketName);
-    runtime.addEnvironmentVariable('DATABASE_SECRET_ID', databaseSecret.secretArn);
-    // agentcore.json's networkConfig only takes literal subnet and security group IDs, so set VPC mode here
-    const cfnRuntime = runtime.resource.node.defaultChild as bedrockagentcore.CfnRuntime;
-    cfnRuntime.networkConfiguration = {
-      networkMode: 'VPC',
-      networkModeConfig: {
-        subnets: appSubnets.subnetIds,
-        securityGroups: [runtimeSecurityGroup.securityGroupId],
-      },
-    };
-    // Update the runtime only once the database schema is current
-    runtime.resource.node.addDependency(migrations);
+    // The public agent only reads the database: no S3, Transcribe or Comprehend permissions
+    const publicRuntime = this.application.runtime(PUBLIC_RUNTIME_NAME);
+    // AgentCoreApplication gives every runtime every memory, with no setting to leave one out. Take the clerks'
+    // Memory back from the public agent: drop its MEMORY_* variables and deny it every action on that memory
+    // (an explicit deny wins over the allow AgentCoreApplication added). The public agent keeps chats in memory.
+    const memory = this.application.memory(MEMORY_NAME);
+    const publicCfnRuntime = publicRuntime.resource.node.defaultChild as bedrockagentcore.CfnRuntime;
+    publicCfnRuntime.addPropertyDeletionOverride(`EnvironmentVariables.${memory.discoveryPrefix}_ID`);
+    publicCfnRuntime.addPropertyDeletionOverride(`EnvironmentVariables.${memory.discoveryPrefix}_ARN`);
+    publicRuntime.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.DENY,
+        actions: ['bedrock-agentcore:*'],
+        resources: [memory.memoryArn],
+      }),
+    );
+    for (const agentRuntime of [runtime, publicRuntime]) {
+      agentRuntime.grantRead(databaseSecret);
+      // the archive code reads the bucket's name when it loads, even where it never uses the bucket
+      agentRuntime.addEnvironmentVariable('MEETING_BUCKET_NAME', bucket.bucketName);
+      agentRuntime.addEnvironmentVariable('DATABASE_SECRET_ID', databaseSecret.secretArn);
+      // agentcore.json's networkConfig only takes literal subnet and security group IDs, so set VPC mode here
+      const cfnRuntime = agentRuntime.resource.node.defaultChild as bedrockagentcore.CfnRuntime;
+      cfnRuntime.networkConfiguration = {
+        networkMode: 'VPC',
+        networkModeConfig: {
+          subnets: appSubnets.subnetIds,
+          securityGroups: [runtimeSecurityGroup.securityGroupId],
+        },
+      };
+      // Update the runtime only once the database schema is current
+      agentRuntime.resource.node.addDependency(migrations);
+    }
 
-    // The hosted front end (CloudFront, and the /api function that calls the runtime)
+    // The hosted front end (CloudFront, and the /api function that calls the public agent)
     const web = new WebFrontend(this, 'Web', {
-      runtimeArn: runtime.runtimeArn,
-      meetingBucket: bucket,
+      runtimeArn: publicRuntime.runtimeArn,
       webDir: path.join(props.application.projectRoot, 'web'),
     });
-    runtime.grantInvoke(web.apiFunction);
+    publicRuntime.grantInvoke(web.apiFunction);
 
     new CfnOutput(this, 'MeetingBucketName', { value: bucket.bucketName });
     new CfnOutput(this, 'DatabaseSecretArn', { value: databaseSecret.secretArn });

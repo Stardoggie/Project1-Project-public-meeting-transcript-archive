@@ -1,7 +1,8 @@
 # Public Meeting Transcript Archive
-An AI agent for an archive of public meeting transcripts. Clerks and residents talk to it in plain English: it manages
-governing bodies and meetings, takes recordings, transcribes them with Amazon Transcribe, and finds people, places and
-topics with Amazon Comprehend. The agent is a LangGraph graph running on Amazon Bedrock AgentCore.
+AI agents for an archive of public meeting transcripts, talked to in plain English. Clerks use the terminal chat: their
+agent manages governing bodies and meetings, takes recordings, transcribes them with Amazon Transcribe, and finds
+people, places and topics with Amazon Comprehend. The public uses a web page whose agent can only read the archive.
+Both agents are LangGraph graphs running on Amazon Bedrock AgentCore.
 
 ## Layout
 - `public_meeting_transcript_archive/meeting_transcript/`: the archive's storage and AWS logic (SQLAlchemy models, store and service functions, migrations). There is no REST API; the agent calls these functions directly.
@@ -51,11 +52,13 @@ flask --app meeting_transcript.app db upgrade
 ```
 
 ## Run
-Start the agent in one terminal:
+Start the clerks' agent in one terminal:
 ```
 cd TranscriptAgent
-agentcore dev
+agentcore dev --agent agent
 ```
+It listens on port 8080, where the terminal chat looks for it. Plain `agentcore dev` starts both runtimes: `agent` on
+8080 and the read-only `public_agent` on 8081.
 Then chat with it from another, using the terminal chat (see `TranscriptAgent/cli/README.md`):
 ```
 cd TranscriptAgent/cli
@@ -70,24 +73,27 @@ starts a new conversation of its own).
 
 ## Deploy
 `agentcore deploy` in `TranscriptAgent/` deploys the stack in `TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts` to the
-target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the runtime and its Memory it
-creates:
-- a VPC with one NAT gateway; the runtime runs in its private subnets (pinned to the Availability Zones AgentCore
+target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the two runtimes (`agent` for
+clerks, `public_agent` for the web page) and the Memory it creates:
+- a VPC with one NAT gateway; the runtimes run in its private subnets (pinned to the Availability Zones AgentCore
   supports in VPC mode)
-- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, its credentials in Secrets Manager. The runtime gets
+- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, its credentials in Secrets Manager. The runtimes get
   `DATABASE_SECRET_ID` instead of `DATABASE_URL`
-- the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted
-- the runtime's permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use)
+- the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted. Uploads that
+  are never attached are deleted from `uploads/` after a day
+- `agent`'s permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use);
+  `public_agent` gets the secret but none of those. Only `agent` can use the Memory: AgentCore gives every runtime
+  access to it, so the stack takes it back from `public_agent`
 - a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change
 - the web front end on CloudFront (see `TranscriptAgent/web/README.md`). Its address is the stack's `SiteUrl`
-  output. It has no sign-in: anyone with the address can use the agent
+  output. It has no sign-in because it only talks to `public_agent`, which can only read the archive
 
 The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` while it
 synthesizes and removes it afterwards. Keep the archive's dependencies listed in `app/agent/pyproject.toml` too.
 
 Deleting the stack keeps a final snapshot of the database.
 
-Talk to the deployed agent with the terminal chat (needs boto3, which the archive's `.venv` has):
+Clerks talk to the deployed `agent` with the terminal chat (needs boto3, which the archive's `.venv` has):
 ```
 cd TranscriptAgent/cli
 ../../public_meeting_transcript_archive/.venv/bin/python chat.py --deployed

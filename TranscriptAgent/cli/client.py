@@ -7,12 +7,14 @@ import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
-# agentcore dev normally uses 8080 but moves to the next free port when 8080 is busy
-LOCAL_PORTS = range(8080, 8090)
+# `agentcore dev --agent agent` serves the clerks' agent on 8080. Only that port is tried, because plain
+# `agentcore dev` also starts the read-only public_agent on 8081 and the chat must never end up there.
+LOCAL_AGENT_URL = "http://127.0.0.1:8080"
 # The AgentCore project folder (TranscriptAgent/), where `agentcore status` knows what is deployed
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # A turn can run several tools, so give the deployed agent as long to answer as the local one
 DEPLOYED_READ_TIMEOUT_SECONDS = 300
+CLERKS_RUNTIME = "agent"  # the runtime with every tool; public_agent is the web page's read-only one
 
 
 class DeployedAgentError(Exception):
@@ -20,21 +22,21 @@ class DeployedAgentError(Exception):
 
 
 def find_agent_url() -> str | None:
-    """AGENT_URL if set, otherwise the first local port where `agentcore dev` answers /ping."""
+    """AGENT_URL if set, otherwise the clerks' local agent on port 8080 if it answers /ping."""
     if os.environ.get("AGENT_URL"):
         return os.environ["AGENT_URL"]
-    for port in LOCAL_PORTS:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=1) as response:
-                if json.load(response).get("status") == "Healthy":
-                    return f"http://127.0.0.1:{port}/invocations"
-        except (urllib.error.URLError, OSError, ValueError):
-            continue
+    try:
+        with urllib.request.urlopen(f"{LOCAL_AGENT_URL}/ping", timeout=1) as response:
+            if json.load(response).get("status") == "Healthy":
+                return f"{LOCAL_AGENT_URL}/invocations"
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
     return None
 
 
 def find_runtime_arn() -> str | None:
-    """AGENT_RUNTIME_ARN if set, otherwise the deployed runtime that `agentcore status` reports for this project."""
+    """AGENT_RUNTIME_ARN if set, otherwise the clerks' `agent` runtime as `agentcore status` reports it (never the
+    read-only `public_agent`)."""
     if os.environ.get("AGENT_RUNTIME_ARN"):
         return os.environ["AGENT_RUNTIME_ARN"]
     try:
@@ -43,7 +45,8 @@ def find_runtime_arn() -> str | None:
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     for resource in resources:
-        if resource.get("resourceType") == "runtime" and resource.get("deploymentState") == "deployed":
+        is_clerks_agent = resource.get("resourceType") == "runtime" and resource.get("name") == CLERKS_RUNTIME
+        if is_clerks_agent and resource.get("deploymentState") == "deployed":
             return resource.get("arn")
     return None
 

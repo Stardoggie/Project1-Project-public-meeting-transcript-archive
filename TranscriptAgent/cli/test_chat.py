@@ -510,13 +510,36 @@ def test_find_runtime_arn_prefers_the_env_var_then_agentcore_status(monkeypatch)
     monkeypatch.setenv("AGENT_RUNTIME_ARN", "arn:from-env")
     assert client.find_runtime_arn() == "arn:from-env"
     monkeypatch.delenv("AGENT_RUNTIME_ARN")
+    # the public agent comes first here, and is skipped: the terminal chat only ever talks to the clerks' agent
     status = {"resources": [{"resourceType": "memory", "deploymentState": "deployed", "arn": "arn:memory"},
-                            {"resourceType": "runtime", "deploymentState": "deployed", "arn": RUNTIME_ARN}]}
+                            {"resourceType": "runtime", "name": "public_agent", "deploymentState": "deployed",
+                             "arn": "arn:public"},
+                            {"resourceType": "runtime", "name": "agent", "deploymentState": "deployed",
+                             "arn": RUNTIME_ARN}]}
     finished = subprocess.CompletedProcess([], 0, stdout=json.dumps(status), stderr="")
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: finished)
     assert client.find_runtime_arn() == RUNTIME_ARN
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, stdout="", stderr="no"))
     assert client.find_runtime_arn() is None
+
+
+def test_find_agent_url_only_tries_the_clerks_port(monkeypatch):
+    import io
+    import urllib.error
+    import client
+    monkeypatch.setenv("AGENT_URL", "http://from-env/invocations")
+    assert client.find_agent_url() == "http://from-env/invocations"
+    monkeypatch.delenv("AGENT_URL")
+    tried = []
+    def ping(url, timeout):
+        tried.append(url)
+        raise urllib.error.URLError("refused")
+    monkeypatch.setattr(client.urllib.request, "urlopen", ping)
+    # with nothing on 8080 it gives up, rather than moving on to public_agent on 8081
+    assert client.find_agent_url() is None
+    assert tried == ["http://127.0.0.1:8080/ping"]
+    monkeypatch.setattr(client.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(b'{"status": "Healthy"}'))
+    assert client.find_agent_url() == "http://127.0.0.1:8080/invocations"
 
 
 FORM_FIELDS = {"key": "uploads/meeting-transcription-x.mp3", "Content-Type": "audio/mpeg", "policy": "abc", "x-amz-signature": "sig"}

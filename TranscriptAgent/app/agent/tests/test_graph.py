@@ -196,7 +196,7 @@ def test_cut_off_request_leaves_a_history_bedrock_accepts():
     messages = graph.get_state(config).values["messages"]
     dangling = close_dangling_tool_calls(messages)
     assert [(m.tool_call_id, m.content) for m in dangling] == [("call-1", INTERRUPTED)]
-    # main.py sends the closing results with the next message, as here
+    # serve.py sends the closing results with the next message, as here
     asyncio.run(graph.ainvoke({"messages": [*dangling, HumanMessage("hello again")]}, config))
     seen = model.seen[-1]
     assert [type(m).__name__ for m in seen[1:]] == ["HumanMessage", "AIMessage", "ToolMessage", "HumanMessage"]
@@ -246,21 +246,21 @@ def test_full_transcript_without_one_says_so():
 
 
 def test_replies_are_not_shortened_but_tool_peeks_are():
-    import main
+    import serve
     long_reply = "x" * 20_000
-    assert main._event("agent", AIMessage(content=long_reply))["text"] == long_reply
-    assert len(main._event("tools", ToolMessage(content="y" * 5000, name="get_meeting", tool_call_id="c"))["text"]) == 2000
+    assert serve._event("agent", AIMessage(content=long_reply))["text"] == long_reply
+    assert len(serve._event("tools", ToolMessage(content="y" * 5000, name="get_meeting", tool_call_id="c"))["text"]) == 2000
     shown = ToolMessage(content="note", name="show_full_transcript", tool_call_id="c",
                         artifact={"meeting_id": 1, "title": "T", "meeting_date": "2026-11-10", "transcript": long_reply})
-    event = main._transcript_event("tools", shown)
+    event = serve._transcript_event("tools", shown)
     assert event["type"] == "transcript" and event["transcript"] == long_reply
-    assert main._transcript_event("tools", ToolMessage(content="x", name="get_meeting", tool_call_id="c")) is None
+    assert serve._transcript_event("tools", ToolMessage(content="x", name="get_meeting", tool_call_id="c")) is None
 
 
 def test_upload_links_are_never_trimmed():
-    import main
+    import serve
     link = '{"upload_url": "https://s3/' + "x" * 3000 + '", "audio_key": "audio/k.mp3", "method": "PUT"}'
-    event = main._event("tools", ToolMessage(content=link, name="request_audio_upload", tool_call_id="c"))
+    event = serve._event("tools", ToolMessage(content=link, name="request_audio_upload", tool_call_id="c"))
     assert event["text"] == link
 
 
@@ -311,15 +311,15 @@ def test_database_errors_reach_the_model_without_sql():
 
 
 def test_requests_without_a_session_id_never_share_one():
-    import main
+    import serve
 
     class Context:
         session_id = None
 
-    first, second = main._session_id(Context()), main._session_id(None)
+    first, second = serve._session_id(Context()), serve._session_id(None)
     assert first != second and first.startswith("local-")
     Context.session_id = "cli-abc"
-    assert main._session_id(Context()) == "cli-abc"
+    assert serve._session_id(Context()) == "cli-abc"
 
 
 def test_a_messages_payload_is_told_to_send_a_prompt():

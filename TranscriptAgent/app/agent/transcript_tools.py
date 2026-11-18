@@ -492,3 +492,8 @@ TOOLS = [
     request_audio_upload, attach_uploaded_audio, start_transcription, check_transcription,
     get_transcript, show_full_transcript, get_trending_entities
 ]
+# The public agent's tools: they only read the archive, so the public can't add, change or delete anything
+READ_TOOLS = [
+    list_governing_bodies, get_governing_body, search_meetings, get_meeting,
+    get_transcript, show_full_transcript, get_trending_entities
+]

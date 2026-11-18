@@ -5,7 +5,7 @@ only uses Python's standard library (Python 3.11+), so there is nothing to insta
 also needs boto3 (see below).
 
 ## Run
-1. Start the agent: `agentcore dev` in `TranscriptAgent/`.
+1. Start the clerks' agent: `agentcore dev --agent agent` in `TranscriptAgent/`.
 2. In this folder: `python chat.py` (`python3 chat.py` on Linux and macOS)
 
 The example below uses a Windows path; on Linux and macOS it would be `~/Recordings/hearing.mp3`.
@@ -46,8 +46,9 @@ The first upload line is for Windows, the second for Linux and macOS (`python3` 
 Without `--meeting`, the agent may ask which meeting the recording is for; the chat then stays open so you can
 answer, and the file is uploaded once it knows.
 
-The CLI finds `agentcore dev` on ports 8080–8089 by itself. Set `AGENT_URL` (or `--agent-url`) to use another
-endpoint.
+The CLI looks for the clerks' agent on port 8080 only. Plain `agentcore dev` (without `--agent`) also starts the
+read-only `public_agent` on 8081, and the chat never connects to it by itself. If the agent is on another port, set
+`AGENT_URL` (or `--agent-url`), e.g. `http://127.0.0.1:8085/invocations`.
 
 ## Deployed agent
 Add `--deployed` to chat with the agent deployed by `agentcore deploy` instead of a local one. Everything else works
@@ -56,8 +57,8 @@ the same, including uploads and confirmations:
 ../../public_meeting_transcript_archive/.venv/bin/python chat.py --deployed
 ```
 Requests are signed with your AWS credentials (the AWS CLI profile), so this mode needs boto3; the archive's `.venv`
-already has it, or `pip install boto3`. The CLI asks `agentcore status` which runtime is deployed; set
-`AGENT_RUNTIME_ARN` to use a different one.
+already has it, or `pip install boto3`. The CLI asks `agentcore status` for the deployed `agent` runtime (the clerks'
+one; it never picks the web page's read-only `public_agent`); set `AGENT_RUNTIME_ARN` to use a different one.
 
 ## Test
 `python -m pytest test_chat.py` (offline; needs pytest).

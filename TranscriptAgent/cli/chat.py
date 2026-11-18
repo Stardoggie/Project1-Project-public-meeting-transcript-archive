@@ -6,7 +6,7 @@
     python chat.py --upload PATH                     upload; chats until the agent knows which meeting
     python chat.py --deployed                        chat with the agent deployed to AWS instead
 
-Start the agent first with `agentcore dev` in TranscriptAgent/, or deploy it with `agentcore deploy`.
+Start the agent first with `agentcore dev --agent agent` in TranscriptAgent/, or deploy it with `agentcore deploy`.
 --deployed signs requests with your AWS credentials, so it needs boto3 (the archive's .venv has it).
 """
 import argparse
@@ -401,7 +401,8 @@ def main():
     else:
         agent_url = args.agent_url or find_agent_url()
         if not agent_url:
-            sys.exit("Can't find the agent. Start it with `agentcore dev` in TranscriptAgent/, or set AGENT_URL.")
+            sys.exit("Can't find the agent on port 8080. Start it with `agentcore dev --agent agent` in "
+                     "TranscriptAgent/, or set AGENT_URL.")
         chat = Chat(agent_url, args.transcripts)
     if args.upload:
         chat.upload(args.upload, args.meeting or "")
