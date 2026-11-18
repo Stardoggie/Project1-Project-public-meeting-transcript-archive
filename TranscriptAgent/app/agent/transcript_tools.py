@@ -408,7 +408,11 @@ def _delete_from_s3(s3, key: str):
 @tool
 def start_transcription(meeting_id: int) -> dict:
     """Start transcribing a meeting's recording. Transcription takes minutes; check it with check_transcription."""
-    return _run(transcription.start_transcription_job, meeting_id)
+    result = _run(transcription.start_transcription_job, meeting_id)
+    # the terminal chat reads which meeting started, so it can check on it by itself until it's done
+    if isinstance(result, dict) and "error" not in result:
+        result["meeting_id"] = meeting_id
+    return result
 
 
 @tool

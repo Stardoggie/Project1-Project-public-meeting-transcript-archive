@@ -604,3 +604,73 @@ def test_s3_refusing_a_file_is_explained(recordings, monkeypatch, capsys):
 def test_summarize_keeps_the_upload_form_fields():
     result = summarize(POST_EVENTS)
     assert result["upload_fields"] == FORM_FIELDS and result["upload_url"] == "https://s3/bucket"
+
+
+STARTED_EVENTS = [
+    {"type": "ai", "text": "", "tool_calls": [{"name": "start_transcription", "args": {"meeting_id": 7}}]},
+    {"type": "tool", "tool": "start_transcription", "text": '{"job_name": "job-7", "status": "IN_PROGRESS", "meeting_id": 7}'},
+    {"type": "ai", "text": "Transcription has started."}
+]
+
+
+def status_events(status, **extra):
+    return [{"type": "transcription_status", "meeting_id": 7, "job_name": "job-7", "status": status, **extra}]
+
+
+class ScriptedAgentChat(Chat):
+    """The real send and waiting loop, with the agent's answers scripted; records every request."""
+
+    def __init__(self, replies):
+        super().__init__("http://agent.invalid")
+        self.replies, self.requests = list(replies), []
+
+    def _request(self, payload):
+        self.requests.append(payload)
+        return self.replies.pop(0)
+
+
+def test_a_started_transcription_is_checked_without_the_model_until_it_finishes(monkeypatch, capsys):
+    chat = ScriptedAgentChat([STARTED_EVENTS, status_events("IN_PROGRESS"), status_events("ANALYZING"),
+                              status_events("COMPLETED")])
+    naps = []
+    monkeypatch.setattr("chat.time.sleep", naps.append)
+    chat.handle("start transcribing the budget hearing")
+    # one prompt to the model, then only direct status checks, with a wait between unfinished ones
+    assert chat.requests[0] == {"prompt": "start transcribing the budget hearing"}
+    assert chat.requests[1:] == [{"check_transcription": 7}] * 3
+    assert naps == [30, 30]
+    assert "Transcription finished" in capsys.readouterr().out
+
+
+def test_a_failed_transcription_says_why(monkeypatch, capsys):
+    chat = ScriptedAgentChat([STARTED_EVENTS, status_events("FAILED", failure_reason="The media format is invalid.")])
+    monkeypatch.setattr("chat.time.sleep", lambda seconds: None)
+    chat.handle("start transcribing the budget hearing")
+    assert "Transcription failed: The media format is invalid." in capsys.readouterr().out
+
+
+def test_ctrl_c_stops_waiting_but_not_the_chat(monkeypatch, capsys):
+    chat = ScriptedAgentChat([STARTED_EVENTS, status_events("IN_PROGRESS")])
+
+    def interrupted(seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("chat.time.sleep", interrupted)
+    chat.handle("start transcribing the budget hearing")
+    assert len(chat.requests) == 2
+    assert "Stopped waiting" in capsys.readouterr().out
+
+
+def test_a_check_the_agent_refuses_stops_waiting(monkeypatch, capsys):
+    refused = [{"type": "transcription_status", "meeting_id": 7, "error": "not_found", "detail": "Meeting not found."}]
+    chat = ScriptedAgentChat([STARTED_EVENTS, refused])
+    monkeypatch.setattr("chat.time.sleep", lambda seconds: None)
+    chat.handle("start transcribing the budget hearing")
+    assert len(chat.requests) == 2
+    assert "Couldn't check the transcription: Meeting not found." in capsys.readouterr().out
+
+
+def test_a_refused_start_is_not_waited_for():
+    refused = [{"type": "tool", "tool": "start_transcription", "text": '{"error": "no_recording", "detail": "Attach a recording first."}'}]
+    assert summarize(refused)["transcriptions_started"] == []
+    assert summarize(STARTED_EVENTS)["transcriptions_started"] == [7]

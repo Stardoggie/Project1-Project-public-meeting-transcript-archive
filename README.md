@@ -124,8 +124,9 @@ Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against
 ## Edge cases
 ### Transcription runs in the background
 Transcribe doesn't finish right away. Starting transcription moves the meeting to `transcribing` and returns the job
-name; ask the agent to check on it (`check_transcription`) and, once the job is done, the transcript is stored and
-the meeting becomes `archived`.
+name. The terminal chat then checks on it every 30 seconds by itself, without the model, until it's done. Once the
+job is done, the transcript is stored and the meeting becomes `archived`. Ctrl+C stops the waiting, not the job; ask
+the agent to check on it (`check_transcription`) later.
 
 ### Transcribe fails
 A failed job puts the meeting back to `recorded`, since the recording is still in S3, and the failure reason is

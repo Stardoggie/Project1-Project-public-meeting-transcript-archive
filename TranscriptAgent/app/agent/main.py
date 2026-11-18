@@ -16,6 +16,7 @@ def _make_checkpointer():
 
 
 graph = build_graph(load_model(), _make_checkpointer())
-app = create_app(graph)
+# direct_checks lets the terminal chat check a transcription without the model while it waits for it
+app = create_app(graph, direct_checks=True)
 if __name__ == "__main__":
     app.run()

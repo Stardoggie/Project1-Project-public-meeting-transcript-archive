@@ -13,6 +13,7 @@ import argparse
 import os
 import re
 import sys
+import time
 import urllib.error
 import uuid
 from client import DeployedAgentError, find_agent_url, find_runtime_arn, invoke, invoke_deployed, post_file, put_file, summarize
@@ -46,6 +47,10 @@ URL = re.compile(r"https?://", re.IGNORECASE)
 UPLOAD_WORD = re.compile(r"^\s*/?upload\b[\s:,-]*", re.IGNORECASE)
 # Backticks or emphasis that may wrap a link, like `url` or **url**
 LINK_WRAPPER = r"(?:`|\*\*|\*|__|_)?"
+# After transcription starts, the chat checks on it this often, without the model, until it's done
+CHECK_EVERY_SECONDS = 30
+# Statuses that mean the transcription is finished one way or another; QUEUED, IN_PROGRESS and ANALYZING keep waiting
+FINISHED = {"COMPLETED", "FAILED", "SUPERSEDED"}
 
 
 def new_session() -> str:
@@ -183,6 +188,18 @@ def said_yes(answer: str) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
+def show_finished(status: dict):
+    """Say how a finished transcription ended."""
+    if status["status"] == "COMPLETED":
+        print("  Transcription finished: the transcript is stored and analyzed. Ask to see it, e.g. "
+              "\"show me the transcript\".")
+    elif status["status"] == "FAILED":
+        reason = status.get("failure_reason") or "Transcribe gave no reason"
+        print(f"  Transcription failed: {reason.rstrip('.')}.")
+    else:
+        print(f"  Transcription stopped: {status.get('detail') or status['status']}")
+
+
 class Chat:
     def __init__(self, agent_url: str, transcript_dir: str = ".", runtime_arn: str | None = None):
         self.agent_url = agent_url
@@ -200,21 +217,24 @@ class Chat:
             return invoke_deployed(self.runtime_arn, self.session_id, payload)
         return invoke(self.agent_url, self.session_id, payload)
 
-    def send(self, payload: dict) -> dict | None:
+    def _ask_agent(self, payload: dict) -> list[dict] | None:
+        """The agent's events for one request, or None after saying why it couldn't be reached."""
         try:
-            result = summarize(self._request(payload))
+            return self._request(payload)
         except DeployedAgentError as e:
             print(f"  The deployed agent couldn't answer: {e}")
-            self.failed = True
-            return None
         except urllib.error.HTTPError as e:  # reached the agent, but it failed
             print(f"  The agent at {self.agent_url} returned an error: HTTP {e.code} {e.reason}.")
-            self.failed = True
-            return None
         except (urllib.error.URLError, OSError) as e:
-            print(f"  Can't reach the agent at {self.agent_url} ({e}). Is `agentcore dev` running?")
-            self.failed = True
+            print(f"  Can't reach the agent at {self.agent_url} ({e}). Is `agentcore dev --agent agent` running?")
+        self.failed = True
+        return None
+
+    def send(self, payload: dict) -> dict | None:
+        events = self._ask_agent(payload)
+        if events is None:
             return None
+        result = summarize(events)
         if result["upload_url"]:
             # The agent is ready for a recording: upload it here instead of showing the link
             self.show(result, hide=result["upload_url"])
@@ -222,7 +242,41 @@ class Chat:
             self.confirm(result)
             return self.finish_upload(result["upload_url"], result["audio_key"], result["upload_fields"])
         self.show(result)
+        for meeting_id in result["transcriptions_started"]:
+            self.wait_for_transcription(meeting_id)
         return self.confirm(result)
+
+    def check_transcription(self, meeting_id: int) -> dict | None:
+        """Ask the agent for the transcription's status directly, without the model, so each check costs no tokens.
+        When the job is done this also stores the transcript and analyzes it. None if the agent couldn't be reached."""
+        events = self._ask_agent({"check_transcription": meeting_id})
+        if events is None:
+            return None
+        for event in events:
+            if event.get("type") == "transcription_status" or event.get("error"):
+                return event
+        return {"error": "The agent didn't send back a transcription status."}
+
+    def wait_for_transcription(self, meeting_id: int):
+        """Check the transcription every CHECK_EVERY_SECONDS until it's finished; Ctrl+C stops waiting, not the job."""
+        print(f"  Transcribing. Checking every {CHECK_EVERY_SECONDS} seconds until it's done (Ctrl+C to stop "
+              "waiting)", end="", flush=True)
+        try:
+            while True:
+                status = self.check_transcription(meeting_id)
+                if status is None:
+                    return
+                if status.get("error"):
+                    print(f"\n  Couldn't check the transcription: {status.get('detail') or status['error']}")
+                    return
+                if status.get("status") in FINISHED:
+                    print()
+                    show_finished(status)
+                    return
+                print(".", end="", flush=True)  # still going
+                time.sleep(CHECK_EVERY_SECONDS)
+        except KeyboardInterrupt:
+            print("\n  Stopped waiting. The transcription keeps going; ask the agent to check on it later.")
 
     def show(self, result: dict, hide: str | None = None):
         """Print replies and transcripts in order, then errors; hide is an upload link to cut out of the replies."""

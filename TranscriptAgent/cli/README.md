@@ -27,6 +27,10 @@ archive> Delete the Budget Hearing meeting
   it. The file must be MP3 or WAV, up to 500 MB, and is checked before anything is uploaded.
   Give the path on its own line: a pasted block, or a line with a link or command in it (like `curl -T file.mp3
   https://...`), is sent as text and never uploads anything.
+- **Waiting for transcription:** once transcription starts, the CLI checks on it every 30 seconds until it's
+  finished, then says whether the transcript is stored and analyzed or why it failed. These checks go straight to the
+  `check_transcription` tool without the model, so they cost no tokens. Ctrl+C stops waiting (the transcription keeps
+  going); ask the agent to check on it later.
 - **Pasting:** a multi-line paste is sent as one message, not one per line. Lines of only punctuation (a stray
   backtick) are ignored.
 - **Confirmations:** deletes (and replacing a meeting's transcribed audio) ask `[y/N]`; `y` or `yes` confirms, and

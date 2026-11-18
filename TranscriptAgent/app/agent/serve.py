@@ -1,4 +1,5 @@
 """Request handling shared by both agents: main.py (the clerks' agent) and public_main.py (the read-only public one)."""
+import asyncio
 import logging
 import uuid
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -6,6 +7,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from graph import close_dangling_tool_calls
 from parse import parse_payload
+from transcript_tools import as_id, check_transcription
 # Tool results are only a peek at what a tool returned; the agent's own replies are never shortened
 MAX_TOOL_EVENT_CHARS = 2000
 # Clients read these tool results whole: the upload link carries temporary credentials and can pass 2,000 characters
@@ -39,8 +41,24 @@ def _session_id(context) -> str:
     return getattr(context, "session_id", None) or f"local-{uuid.uuid4().hex}"
 
 
-async def handle_request(payload, context, graph):
-    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards."""
+def transcription_status(meeting_id) -> dict:
+    """A transcription check the terminal chat asks for by itself while it waits, run without the model so it costs
+    no tokens. It's the check_transcription tool's result, which stores the transcript once the job is done."""
+    meeting_id = as_id(meeting_id)
+    if meeting_id is None:
+        return {"error": "check_transcription must be a meeting id"}
+    result = check_transcription.invoke({"meeting_id": meeting_id})
+    result.pop("transcript", None)  # the chat only needs the status; the transcript is shown when asked for
+    return {"type": "transcription_status", "meeting_id": meeting_id, **result}
+
+
+async def handle_request(payload, context, graph, direct_checks=False):
+    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards.
+    With direct_checks (the clerks' agent only), {"check_transcription": <meeting id>} is answered without the model."""
+    if direct_checks and isinstance(payload, dict) and "check_transcription" in payload:
+        # the check talks to the database and AWS, so keep it off the event loop
+        yield await asyncio.to_thread(transcription_status, payload["check_transcription"])
+        return
     session_id = _session_id(context)
     try:
         async for event in run_turn(payload, session_id, graph):
@@ -110,8 +128,9 @@ async def run_turn(payload, session_id: str, graph):
             yield event
 
 
-def create_app(graph):
-    """The AgentCore app that answers every request with the given graph."""
+def create_app(graph, direct_checks=False):
+    """The AgentCore app that answers every request with the given graph; direct_checks also allows the terminal
+    chat's transcription checks, which skip the model."""
     app = BedrockAgentCoreApp()
     if logging.getLogger().handlers:
         # The root logger already prints (OpenTelemetry's handler when deployed), so the app's own handler would
@@ -120,7 +139,7 @@ def create_app(graph):
 
     @app.entrypoint
     async def invoke(payload, context):
-        async for event in handle_request(payload, context, graph):
+        async for event in handle_request(payload, context, graph, direct_checks):
             yield event
 
     return app
