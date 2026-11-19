@@ -90,14 +90,21 @@ chatbot, so `--agent` says which one to run.)
 
 After providing credentials, `agentcore deploy` will deploy your project into Amazon Bedrock AgentCore.
 
-The deployed runtime is set up in two places:
+The deployed runtimes are set up entirely in `agentcore/agentcore.json`. The CDK stack code only adds the hosted web
+page, which calls the `chatbot`:
 
-- `agentcore/agentcore.json`: `envVars` gives the runtime `AWS_REGION`, and `additionalPolicies` attaches the existing
-  IAM managed policy `meeting-transcript-archive` (`iam/policy.json` at the repo root is a copy of it). AgentCore adds
-  `MEMORY_AGENTMEMORY_ID` itself.
-- `agentcore/cdk/lib/cdk-stack.ts`: creates the RDS database, the S3 bucket and the VPC the runtime runs in, and gives
-  the runtime `DATABASE_SECRET_ID` (the database secret's ARN, never the password) and `MEETING_BUCKET_NAME`.
-  See "Deploy" in the root README for everything the stack creates.
+- `envVars` gives each runtime `DATABASE_SECRET_ID` (the secret's name, never the password), `MEETING_BUCKET_NAME`
+  and `AWS_REGION`, and the `chatbot` its `GUARDRAIL_ID` and `GUARDRAIL_VERSION`. AgentCore adds
+  `MEMORY_AGENTMEMORY_ID` itself, to both runtimes.
+- `additionalPolicies` attaches an existing IAM managed policy to each runtime: `meeting-transcript-archive` to
+  `agent` (S3 audio and transcripts, Transcribe, Comprehend, and reading the database secret; `iam/policy.json` at the
+  repo root is a copy of it), and `meeting-transcript-public-agent` to `chatbot` (reading the secret, using its
+  guardrail, and a deny on the clerks' Memory; copy in `iam/public-agent-policy.json`). The chatbot always keeps
+  conversations in its own process memory, so it never uses the Memory anyway.
+
+The secret, both policies and the chatbot's guardrail are made outside this project (in the AWS console) and must
+exist before deploying. The database's security group must allow port 5432 from the runtimes, which have no fixed
+address.
 
 Invoke the deployed Runtime with its native payload (session ids need at least 33 characters):
 

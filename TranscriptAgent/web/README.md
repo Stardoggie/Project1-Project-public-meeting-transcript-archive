@@ -9,8 +9,8 @@ It runs in two ways.
 ## Hosted (CloudFront)
 `agentcore deploy` publishes it. The stack outputs `SiteUrl` (the CloudFront address).
 
-- **No sign-in:** anyone with the address can ask questions. Answers come only from the archive, through a database
-  user that can only read.
+- **No sign-in:** anyone with the address can ask questions. Answers come only from the archive, over database
+  connections that can only read.
 - **API:** CloudFront sends `/api/*` to a Lambda (`agentcore/cdk/lambda/api/index.ts`) through origin access control.
   The Lambda sends each question to the chatbot runtime. Each conversation is kept apart by its session id, a random
   value the browser makes.

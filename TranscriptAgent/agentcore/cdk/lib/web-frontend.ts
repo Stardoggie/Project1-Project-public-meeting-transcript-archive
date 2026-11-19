@@ -21,7 +21,7 @@ export interface WebFrontendProps {
  * Lambda (behind CloudFront origin access control) that calls the read-only chatbot runtime.
  *
  * There is no sign-in: anyone with the site's address can ask the chatbot questions. It can't change the archive or
- * upload anything; that's the admin agent's job, from the terminal chat.
+ * upload anything; that's the clerks' agent's job, from the terminal chat.
  */
 export class WebFrontend extends Construct {
   public readonly apiFunction: nodejs.NodejsFunction;

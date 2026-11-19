@@ -1,12 +1,14 @@
 """The chatbot's read-only tools, its graph, and that it can't change the archive."""
 import asyncio
+import psycopg
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from sqlalchemy.exc import InternalError
+from sqlalchemy import text
 import tools as t
 from graph import build_graph, close_dangling_tool_calls
+from meeting_transcript.app import ReadOnlyError
 from meeting_transcript.extensions import db
 from meeting_transcript.governing_body.models_db import GoverningBody
 
@@ -34,11 +36,37 @@ def test_only_read_tools_are_offered():
 def test_read_only_app_refuses_writes(archive):
     with t._flask.app_context():
         db.session.add(GoverningBody(name="Sneaky Board", body="board", description="should never be saved"))
-        with pytest.raises(InternalError, match="read-only transaction"):
+        with pytest.raises(ReadOnlyError, match="INSERT"):
             db.session.commit()
         db.session.rollback()
     names = [body["name"] for body in t.list_governing_bodies.invoke({})]
     assert "Sneaky Board" not in names
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE governing_body SET name = 'x'",
+    "DELETE FROM meetings",
+    "SET default_transaction_read_only = off",
+    "SET TRANSACTION READ WRITE",
+    "DROP TABLE meetings",
+])
+def test_read_only_app_only_sends_queries(archive, statement):
+    with t._flask.app_context():
+        with pytest.raises(ReadOnlyError):
+            db.session.execute(text(statement))
+        db.session.rollback()
+
+
+def test_database_refuses_writes_the_app_check_never_sees(archive):
+    """A raw connection skips the app's check, and Postgres still refuses the write."""
+    with t._flask.app_context():
+        raw = db.engine.raw_connection()
+        try:
+            with raw.cursor() as cur, pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+                cur.execute("INSERT INTO governing_body (name, body, description) VALUES ('Sneaky', 'board', 'x')")
+            raw.rollback()
+        finally:
+            raw.close()
 
 
 def test_write_errors_are_explained_without_sql(archive):
@@ -147,3 +175,19 @@ def test_close_dangling_tool_calls():
     closed = close_dangling_tool_calls(messages)
     assert [m.tool_call_id for m in closed] == ["b"]
     assert close_dangling_tool_calls([HumanMessage("q"), AIMessage(content="done")]) == []
+
+
+def test_the_chatbot_refuses_a_transcription_check():
+    """Only the clerks' agent answers the terminal chat's direct {"check_transcription": id} requests."""
+    import main
+
+    class Context:
+        session_id = "chatbot-check-0123456789abcdef01234567"
+
+    model = ScriptedModel(responses=[])  # no replies: a model call would fail the test
+    graph = build_graph(model, InMemorySaver())
+
+    async def collect():
+        return [event async for event in main.handle_request({"check_transcription": 7}, Context(), graph=graph)]
+    events = asyncio.run(collect())
+    assert len(events) == 1 and "prompt" in events[0]["error"]

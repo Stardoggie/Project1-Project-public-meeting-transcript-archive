@@ -84,28 +84,32 @@ python server.py        then open http://127.0.0.1:8501
 ```
 
 ## Deploy
-`agentcore deploy` in `TranscriptAgent/` deploys the stack in `TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts` to the
-target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the two runtimes (`agent` and
-`chatbot`) and their Memory it creates:
-- a VPC with one NAT gateway; both runtimes run in its private subnets (pinned to the Availability Zones AgentCore
-  supports in VPC mode)
-- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, with two users whose credentials are in Secrets Manager:
-  the admin user (for the admin agent and migrations) and `archive_reader` (for the chatbot), which can only read.
-  Each runtime gets its own secret as `DATABASE_SECRET_ID` instead of `DATABASE_URL`
-- the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted
-- the admin agent's permissions for S3, Transcribe, Comprehend and its secret (what `iam/policy.json` lists for local
-  use). The chatbot gets only its own secret and Bedrock
-- a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change, and keeps
-  the `archive_reader` user and its read-only grants up to date
-- the website on CloudFront, which talks only to the chatbot (see `TranscriptAgent/web/README.md`). Its address is
-  the stack's `SiteUrl` output. It has no sign-in: anyone with the address can ask questions, but nothing it does can
-  change the archive
+`agentcore deploy` in `TranscriptAgent/` deploys both agents to AgentCore Runtime (account and region in
+`agentcore/aws-targets.json`): `agent` for clerks and `chatbot` for the web page. Their settings are in
+`TranscriptAgent/agentcore/agentcore.json` (see the agent README), and they use the existing `TranscriptionDBSecret`
+secret, `lg-transcription-db` database and `lg-transcription-bucket` bucket. The CDK stack
+(`TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts`) only adds the website on CloudFront, which talks only to the
+chatbot (see `TranscriptAgent/web/README.md`); its address is the stack's `SiteUrl` output.
+
+Each runtime gets its own IAM managed policy:
+- `agent`: `meeting-transcript-archive` (copy in `iam/policy.json`): S3, Transcribe, Comprehend and the secret.
+- `chatbot`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret and its
+  Bedrock Guardrail, and it refuses any model call made without a guardrail. It also denies the clerks' Memory, since
+  AgentCore gives every runtime access to it. The chatbot also opens every database connection read-only and only
+  sends queries, so the database refuses writes from it.
+
+Both policies must exist before deploying, and so must the chatbot's guardrail (see the chatbot README):
+```
+aws bedrock create-guardrail --cli-input-json file://iam/chatbot-guardrail.json --region us-east-1
+aws bedrock create-guardrail-version --guardrail-identifier <guardrailId from the first command> --region us-east-1
+```
+Its id and version are the chatbot's `GUARDRAIL_ID` and `GUARDRAIL_VERSION` in `agentcore.json`; without them the
+deployed chatbot won't start. The database's security group must allow port 5432 from anywhere, since the runtimes
+have no fixed address (SSL and the password still protect it).
 
 The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` and
 `app/chatbot/` while it synthesizes and removes the copies afterwards. Keep the archive's dependencies listed in both
 runtimes' `pyproject.toml` too.
-
-Deleting the stack keeps a final snapshot of the database.
 
 Talk to the deployed agent with the terminal chat (needs boto3, which the archive's `.venv` has):
 ```

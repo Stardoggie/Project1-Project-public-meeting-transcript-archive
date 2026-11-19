@@ -1,6 +1,5 @@
 """AgentCore entrypoint for the public, read-only chatbot behind the archive's website."""
 import logging
-import os
 import uuid
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langchain_core.messages import HumanMessage
@@ -8,20 +7,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 from graph import build_graph, close_dangling_tool_calls
 from model.load import load_model
 from parse import parse_payload
-MEMORY_ID = os.getenv("MEMORY_AGENTMEMORY_ID")
 # Tool results are only a peek at what a tool returned; the chatbot's own replies are never shortened
 MAX_TOOL_EVENT_CHARS = 2000
 
 
-def _make_checkpointer():
-    """AgentCore Memory when deployed (set by agentcore deploy), in-process memory for local dev."""
-    if MEMORY_ID:
-        from langgraph_checkpoint_aws import AgentCoreMemorySaver
-        return AgentCoreMemorySaver(MEMORY_ID, region_name=os.getenv("AWS_REGION"))
-    return InMemorySaver()
-
-
-graph = build_graph(load_model(), _make_checkpointer())
+# Conversations are kept in this process only. The AgentCore Memory holds the clerks' conversations, and the
+# chatbot's IAM policy (iam/public-agent-policy.json) denies it any access to that Memory.
+graph = build_graph(load_model(), InMemorySaver())
 log = logging.getLogger("bedrock_agentcore.app")  # the AgentCore app's own logger
 
 
