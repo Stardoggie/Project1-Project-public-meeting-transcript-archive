@@ -96,7 +96,8 @@ Plain `agentcore dev` starts both runtimes: `agent` on 8080 and the read-only `p
 
 After providing credentials, `agentcore deploy` will deploy your project into Amazon Bedrock AgentCore.
 
-The deployed runtimes are set up entirely in `agentcore/agentcore.json`; there is no CDK stack code:
+The deployed runtimes are set up entirely in `agentcore/agentcore.json`. The CDK stack code only adds the hosted web
+page, which calls `public_agent`:
 
 - `envVars` gives each runtime `DATABASE_SECRET_ID` (the secret's name, never the password), `MEETING_BUCKET_NAME`
   and `AWS_REGION`. AgentCore adds `MEMORY_AGENTMEMORY_ID` itself, to both runtimes.

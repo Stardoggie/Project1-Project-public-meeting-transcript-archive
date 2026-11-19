@@ -74,15 +74,19 @@ starts a new conversation of its own).
 ## Deploy
 `agentcore deploy` in `TranscriptAgent/` deploys both agents to AgentCore Runtime (account and region in
 `agentcore/aws-targets.json`): `agent` for clerks and `public_agent` for the web page. The archive code is bundled
-with them. There is no stack code to write: the runtimes' settings are in `TranscriptAgent/agentcore/agentcore.json`
-(see the agent README), and they use the existing `TranscriptionDBSecret` secret and S3 bucket. Each runtime gets its
-own IAM managed policy:
+with them. The runtimes' settings are in `TranscriptAgent/agentcore/agentcore.json` (see the agent README), and they
+use the existing `TranscriptionDBSecret` secret and S3 bucket. Each runtime gets its own IAM managed policy:
 - `agent`: `meeting-transcript-archive` (copy in `iam/policy.json`): S3, Transcribe, Comprehend and the secret.
 - `public_agent`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret. It
   also denies the clerks' Memory, since AgentCore gives every runtime access to it.
 
 Both policies must exist before deploying. Before the first deploy, the RDS security group must allow port 5432 from
 anywhere, since the runtimes have no fixed address (SSL and the password still protect it).
+
+The deploy also hosts the public web page, the only thing in the stack code
+(`TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts`): CloudFront serves `TranscriptAgent/web/index.html`, and its
+`/api/*` goes to a Lambda that calls `public_agent` and nothing else. The page's address is the stack's `SiteUrl`
+output (see `TranscriptAgent/web/README.md`). It has no sign-in because `public_agent` can only read the archive.
 
 Clerks talk to the deployed `agent` with the terminal chat (needs boto3, which the archive's `.venv` has):
 ```
