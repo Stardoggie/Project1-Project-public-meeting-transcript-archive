@@ -38,15 +38,19 @@ def configure_logging() -> None:
     app_logger.addHandler(handler)
     app_logger.propagate = False
 
-def create_app():
+def create_app(read_only: bool = False):
     '''
         uses factory pattern to create and return a new flask app
         the agent only uses it for the database context, and flask db upgrade for migrations
         there are no http routes, the agent calls the store and service functions directly
+        read_only makes every transaction on its connections read-only, so the database itself refuses writes
+        (the public chatbot uses this, on top of its read-only database user)
     '''
     configure_logging()
     app = Flask(__name__)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url()
+    if read_only:
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"options": "-c default_transaction_read_only=on"}}
     db.init_app(app)#initilizing db with flask
     migrate.init_app(app,db)#helps manage connection to db
     app.logger.info("Public Meeting Transcript Archive app created")

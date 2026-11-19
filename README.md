@@ -1,11 +1,17 @@
 # Public Meeting Transcript Archive
-An AI agent for an archive of public meeting transcripts. Clerks and residents talk to it in plain English: it manages
-governing bodies and meetings, takes recordings, transcribes them with Amazon Transcribe, and finds people, places and
-topics with Amazon Comprehend. The agent is a LangGraph graph running on Amazon Bedrock AgentCore.
+An archive of public meeting transcripts with two AI agents, both LangGraph graphs on Amazon Bedrock AgentCore:
+- **The admin agent** (`agent`), for archive staff, used from the terminal chat. It manages governing bodies and
+  meetings, takes recordings, transcribes them with Amazon Transcribe, and finds people, places and topics with
+  Amazon Comprehend.
+- **The chatbot** (`chatbot`), for the public, behind the website. It answers questions about the meetings and what
+  was said in them, naming the meeting behind each answer. It only reads: it logs into the database as a user that
+  can't change anything.
 
 ## Layout
 - `public_meeting_transcript_archive/meeting_transcript/`: the archive's storage and AWS logic (SQLAlchemy models, store and service functions, migrations). There is no REST API; the agent calls these functions directly.
-- `TranscriptAgent/`: the AgentCore 1.0 project. The agent code is in `TranscriptAgent/app/agent/` (see its README).
+- `TranscriptAgent/`: the AgentCore 1.0 project. The admin agent's code is in `TranscriptAgent/app/agent/`, the
+  chatbot's in `TranscriptAgent/app/chatbot/`, the terminal chat in `TranscriptAgent/cli/` and the website in
+  `TranscriptAgent/web/` (each has a README).
 
 ## Install
 ### Requirements
@@ -51,10 +57,10 @@ flask --app meeting_transcript.app db upgrade
 ```
 
 ## Run
-Start the agent in one terminal:
+Start the admin agent in one terminal:
 ```
 cd TranscriptAgent
-agentcore dev
+agentcore dev --agent agent
 ```
 Then chat with it from another, using the terminal chat (see `TranscriptAgent/cli/README.md`):
 ```
@@ -68,22 +74,36 @@ Other clients can send prompts to `POST http://localhost:8080/invocations` with 
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation; a request without it
 starts a new conversation of its own).
 
+To try the website, start the chatbot as well (port 8090 keeps it out of the terminal chat's way) and the local web
+server (see `TranscriptAgent/web/README.md`):
+```
+cd TranscriptAgent
+agentcore dev --agent chatbot --port 8090
+cd web
+python server.py        then open http://127.0.0.1:8501
+```
+
 ## Deploy
 `agentcore deploy` in `TranscriptAgent/` deploys the stack in `TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts` to the
-target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the runtime and its Memory it
-creates:
-- a VPC with one NAT gateway; the runtime runs in its private subnets (pinned to the Availability Zones AgentCore
+target in `agentcore/aws-targets.json` (bootstrapping CDK first if needed). Besides the two runtimes (`agent` and
+`chatbot`) and their Memory it creates:
+- a VPC with one NAT gateway; both runtimes run in its private subnets (pinned to the Availability Zones AgentCore
   supports in VPC mode)
-- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, its credentials in Secrets Manager. The runtime gets
-  `DATABASE_SECRET_ID` instead of `DATABASE_URL`
+- PostgreSQL 16 on RDS (`db.t4g.micro`) in isolated subnets, with two users whose credentials are in Secrets Manager:
+  the admin user (for the admin agent and migrations) and `archive_reader` (for the chatbot), which can only read.
+  Each runtime gets its own secret as `DATABASE_SECRET_ID` instead of `DATABASE_URL`
 - the S3 bucket for recordings and transcripts (`MEETING_BUCKET_NAME`), kept if the stack is deleted
-- the runtime's permissions for S3, Transcribe, Comprehend and the secret (what `iam/policy.json` lists for local use)
-- a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change
-- the web front end on CloudFront (see `TranscriptAgent/web/README.md`). Its address is the stack's `SiteUrl`
-  output. It has no sign-in: anyone with the address can use the agent
+- the admin agent's permissions for S3, Transcribe, Comprehend and its secret (what `iam/policy.json` lists for local
+  use). The chatbot gets only its own secret and Bedrock
+- a Lambda that runs the database migrations inside the VPC whenever the archive code or migrations change, and keeps
+  the `archive_reader` user and its read-only grants up to date
+- the website on CloudFront, which talks only to the chatbot (see `TranscriptAgent/web/README.md`). Its address is
+  the stack's `SiteUrl` output. It has no sign-in: anyone with the address can ask questions, but nothing it does can
+  change the archive
 
-The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` while it
-synthesizes and removes it afterwards. Keep the archive's dependencies listed in `app/agent/pyproject.toml` too.
+The deploy packager only installs wheels, so `bin/cdk.ts` copies `meeting_transcript` into `app/agent/` and
+`app/chatbot/` while it synthesizes and removes the copies afterwards. Keep the archive's dependencies listed in both
+runtimes' `pyproject.toml` too.
 
 Deleting the stack keeps a final snapshot of the database.
 
@@ -98,8 +118,9 @@ Logs: `agentcore logs runtime --name agent --since 15m`.
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
 - Agent graph: `uv run pytest tests` in `TranscriptAgent/app/agent/` (pytest is in its `dev` dependency group, which `uv sync` installs)
+- Chatbot: `uv run pytest tests` in `TranscriptAgent/app/chatbot/`
 
-Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
+All three need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
 
 ## Technology
 - Python (3.14 in the AgentCore runtime)

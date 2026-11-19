@@ -8,13 +8,11 @@
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #dde1e7;
     --accent: #2f5bd3; --accent-text: #ffffff; --user: #e8eefc; --error: #b42318; --error-bg: #fef3f2;
-    --warn-bg: #fffaeb; --warn-border: #f5d08a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #98a2b3; --border: #2e3440;
       --accent: #6d8ff0; --accent-text: #0d1220; --user: #23304d; --error: #fda29b; --error-bg: #3a1a17;
-      --warn-bg: #2f2814; --warn-border: #6b5a2b;
     }
   }
   * { box-sizing: border-box; }
@@ -34,17 +32,13 @@
   .note { align-self: center; color: var(--muted); font-size: 13px; }
   .error { align-self: stretch; color: var(--error); background: var(--error-bg); border-radius: 8px; padding: 8px 12px; }
   .card { align-self: stretch; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
-  .card.confirm { background: var(--warn-bg); border-color: var(--warn-border); }
   .card .actions { display: flex; gap: 8px; margin-top: 10px; }
   .card pre { white-space: pre-wrap; max-height: 320px; overflow-y: auto; margin: 10px 0 0; font: 14px/1.5 system-ui, sans-serif; }
   .welcome { color: var(--muted); }
   footer { border-top: 1px solid var(--border); padding: 12px 0 16px; display: flex; flex-direction: column; gap: 10px; }
   .row { display: flex; gap: 8px; align-items: flex-end; }
-  textarea, input[type=text] { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
   textarea { flex: 1; resize: none; min-height: 42px; max-height: 160px; }
-  input[type=text] { flex: 1; min-width: 0; }
-  input[type=file] { max-width: 240px; font-size: 13px; color: var(--muted); }
-  .upload { align-items: center; flex-wrap: wrap; }
   #busy { color: var(--muted); font-size: 13px; min-height: 18px; }
   [hidden] { display: none !important; }
 </style>
@@ -59,21 +53,16 @@
 
   <main id="log" aria-live="polite">
     <div class="welcome">
-      Ask about governing bodies, meetings and transcripts, e.g. “What meetings does Springfield City Council have?”
-      To add a recording, choose an MP3 or WAV file below, say which meeting it is for, and press Upload.
+      Ask about the archive's public meetings and what was said in them, e.g. “What did the city council say about
+      parking this year?” or “Which meetings mentioned Main Street?” Answers name the meeting they come from.
     </div>
   </main>
 
   <footer id="composer">
     <div id="busy"></div>
     <form class="row" id="chat-form">
-      <textarea id="prompt" rows="1" placeholder="Message the archive… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <textarea id="prompt" rows="1" placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"></textarea>
       <button class="primary" id="send" type="submit">Send</button>
-    </form>
-    <form class="row upload" id="upload-form">
-      <input id="file" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav">
-      <input id="meeting" type="text" placeholder="Which meeting? e.g. Budget Hearing, Springfield City Council">
-      <button id="upload" type="submit">Upload</button>
     </form>
   </footer>
 </div>
@@ -82,9 +71,6 @@
 const $ = (id) => document.getElementById(id);
 const log = $("log");
 let sessionId = newSession();
-let pendingFile = null;    // the recording to send once the agent hands out an upload link
-let uploadReady = false;   // the agent has handed out a link and is waiting for the file
-let limits = { max_bytes: 500 * 1024 * 1024, extensions: [".mp3", ".wav"] };
 
 function newSession() {
   return "web-" + crypto.randomUUID().replaceAll("-", "");  // AgentCore wants 33+ characters
@@ -94,7 +80,7 @@ function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-/** Just enough markdown for the agent's replies: bold and inline code. */
+/** Just enough markdown for the chatbot's replies: bold and inline code. */
 function format(text) {
   return escapeHtml(text)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -147,7 +133,7 @@ function transcriptCard(t) {
 
 function setBusy(text) {
   $("busy").textContent = text || "";
-  for (const id of ["send", "upload", "prompt", "file", "meeting", "new"]) $(id).disabled = Boolean(text);
+  for (const id of ["send", "prompt", "new"]) $(id).disabled = Boolean(text);
   if (!text) $("prompt").focus();
 }
 
@@ -167,8 +153,7 @@ async function apiHeaders(body) {
 
 async function post(path, body, headers = {}) {
   try {
-    // Only the hosted API needs the body's hash; local recordings go to server.py unread
-    const signing = config ? await apiHeaders(typeof body === "string" ? body : await body.arrayBuffer()) : {};
+    const signing = await apiHeaders(body);
     const response = await fetch(path, { method: "POST", body, headers: { "X-Session-Id": sessionId, ...signing, ...headers } });
     return JSON.parse(await response.text());
   } catch (e) {
@@ -176,92 +161,15 @@ async function post(path, body, headers = {}) {
   }
 }
 
-/** Hosted: PUT the recording straight to the upload link. Local: server.py uploads it. */
-async function putRecording(file, url) {
-  if (!url) return post("/api/upload", file, { "Content-Type": "application/octet-stream" });
-  try {
-    const response = await fetch(url, { method: "PUT", body: file });
-    if (!response.ok) return { errors: [`The upload failed (HTTP ${response.status}).`] };
-  } catch (e) {
-    return { errors: [`The upload failed (${e.message}).`] };
-  }
-  setBusy("The agent is working…");
-  return post("/api/chat", JSON.stringify({ prompt: "The upload is done. Attach it to that meeting and start transcription." }),
-              { "Content-Type": "application/json" });
-}
-
-async function send(payload, busyText = "The agent is working…") {
-  setBusy(busyText);
-  const result = await post("/api/chat", JSON.stringify(payload), { "Content-Type": "application/json" });
+async function send(prompt) {
+  setBusy("Looking through the archive…");
+  const result = await post("/api/chat", JSON.stringify({ prompt }), { "Content-Type": "application/json" });
   setBusy("");
-  await handle(result);
-}
-
-/** Show a turn's replies and transcripts, then ask for a confirmation or send the waiting recording. */
-async function handle(result) {
   for (const item of result.items || []) {
     if (item.kind === "reply") message("agent", item.text);
     else transcriptCard(item);
   }
   for (const error of result.errors || []) note(error, "error");
-  if (result.upload_ready) uploadReady = { extension: result.upload_extension, url: result.upload_url || null };
-  if (result.confirmation) {
-    askConfirmation(result.confirmation);  // answered first; a waiting upload follows the answer
-    return;
-  }
-  if (uploadReady) await uploadWhenReady();
-}
-
-function askConfirmation(question) {
-  const card = document.createElement("div");
-  card.className = "card confirm";
-  const text = document.createElement("div");
-  text.textContent = question;
-  const actions = document.createElement("div");
-  actions.className = "actions";
-  const answer = async (yes) => {
-    yesButton.disabled = noButton.disabled = true;
-    note(yes ? "Confirmed." : "Cancelled.");
-    await send({ confirm: yes });
-  };
-  const yesButton = Object.assign(document.createElement("button"), { type: "button", className: "primary", textContent: "Yes, go ahead" });
-  const noButton = Object.assign(document.createElement("button"), { type: "button", textContent: "No, cancel" });
-  yesButton.onclick = () => answer(true);
-  noButton.onclick = () => answer(false);
-  actions.append(yesButton, noButton);
-  card.append(text, actions);
-  add(card);
-}
-
-function checkFile(file) {
-  const extension = "." + file.name.split(".").pop().toLowerCase();
-  if (!limits.extensions.includes(extension)) return "Only MP3 and WAV recordings are accepted.";
-  if (file.size === 0) return "That file is empty.";
-  if (file.size > limits.max_bytes) return `That file is ${(file.size / 1048576).toFixed(0)} MB; the limit is 500 MB.`;
-  return null;
-}
-
-/** The agent is waiting for a recording: send the chosen file, or ask for one. */
-async function uploadWhenReady() {
-  if (!pendingFile) {
-    note("The agent is ready for the recording. Choose the file and press Upload.");
-    return;
-  }
-  const file = pendingFile;
-  // The link's name fixes the format Transcribe expects; ask for a matching one if the agent guessed wrong
-  if (uploadReady.extension && !file.name.toLowerCase().endsWith(uploadReady.extension)) {
-    uploadReady = false;
-    await send({ prompt: `The recording is actually named ${file.name}; get an upload link for that name instead.` });
-    return;
-  }
-  const url = uploadReady.url;
-  pendingFile = null;
-  uploadReady = false;
-  setBusy(`Uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
-  const result = await putRecording(file, url);
-  setBusy("");
-  if (!result.errors?.length) note(`Uploaded ${file.name}.`);
-  await handle(result);
 }
 
 $("chat-form").addEventListener("submit", async (event) => {
@@ -270,7 +178,7 @@ $("chat-form").addEventListener("submit", async (event) => {
   if (!text) return;
   $("prompt").value = "";
   message("user", text);
-  await send({ prompt: text });
+  await send(text);
 });
 
 $("prompt").addEventListener("keydown", (event) => {
@@ -280,38 +188,8 @@ $("prompt").addEventListener("keydown", (event) => {
   }
 });
 
-$("upload-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const file = $("file").files[0];
-  if (!file) {
-    note("Choose an MP3 or WAV file first.", "error");
-    return;
-  }
-  const problem = checkFile(file);
-  if (problem) {
-    note(problem, "error");
-    return;
-  }
-  const meeting = $("meeting").value.trim();
-  pendingFile = file;
-  $("file").value = "";
-  $("meeting").value = "";
-  if (uploadReady) {  // the agent already asked for it
-    message("user", `📎 ${file.name}`);
-    await uploadWhenReady();
-    return;
-  }
-  message("user", `📎 ${file.name}` + (meeting ? ` — ${meeting}` : ""));
-  let request = `I want to upload a recording named ${file.name}`;
-  request += meeting ? ` for this meeting: ${meeting}`
-                     : ". Use the meeting we've been talking about; if it isn't clear which one, ask me.";
-  await send({ prompt: request });
-});
-
 $("new").addEventListener("click", () => {
   sessionId = newSession();
-  pendingFile = null;
-  uploadReady = false;
   log.querySelectorAll(":scope > :not(.welcome)").forEach((el) => el.remove());
   note("Started a new conversation.");
 });
@@ -324,8 +202,7 @@ async function init() {
   try {
     const response = await fetch("/api/status", { headers: await apiHeaders("") });
     const status = await response.json();
-    limits = { ...limits, ...status };
-    $("agent").textContent = status.agent;
+    $("agent").textContent = config ? "" : status.agent;
   } catch {}
   $("prompt").focus();
 }

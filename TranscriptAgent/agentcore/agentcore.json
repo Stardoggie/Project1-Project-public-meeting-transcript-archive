@@ -20,6 +20,21 @@
       "additionalPolicies": [
         "arn:aws:iam::397345411365:policy/meeting-transcript-archive"
       ]
+    },
+    {
+      "name": "chatbot",
+      "build": "CodeZip",
+      "modelProvider": "Bedrock",
+      "entrypoint": "main.py",
+      "codeLocation": "app/chatbot",
+      "runtimeVersion": "PYTHON_3_14",
+      "protocol": "HTTP",
+      "envVars": [
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        }
+      ]
     }
   ],
   "memories": [

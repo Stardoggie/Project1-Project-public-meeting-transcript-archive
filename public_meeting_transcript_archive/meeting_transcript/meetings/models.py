@@ -28,6 +28,14 @@ class ListMeetingsDTO(BaseModel):
     key_phrases: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
 
+class TranscriptMatchDTO(BaseModel):
+    """a meeting whose transcript mentions the searched text, with short excerpts around the matches"""
+    id: int
+    title: str
+    governing_body: str
+    meeting_date: date
+    snippets: list[str] = Field(default_factory=list)
+
 class UpdateMeetingsDTO(BaseModel):
     title: str  = Field(max_length=60)
     meeting_date : date

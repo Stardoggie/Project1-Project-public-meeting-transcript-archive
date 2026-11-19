@@ -19,8 +19,12 @@ export interface AgentCoreStackProps extends StackProps {
   application: AgentCoreApplicationProps;
 }
 
-/** The runtime declared in agentcore/agentcore.json. */
+/** The runtimes declared in agentcore/agentcore.json: the admin agent (terminal chat) and the public chatbot (web). */
 const RUNTIME_NAME = 'agent';
+const CHATBOT_RUNTIME_NAME = 'chatbot';
+
+/** The database user the chatbot logs in as; the migration step creates it with SELECT-only rights. */
+const READER_USERNAME = 'archive_reader';
 
 /**
  * AgentCore Runtime only places VPC-mode runtimes in some Availability Zones, given as AZ IDs (AZ names map to
@@ -56,15 +60,18 @@ function hashTree(roots: string[]): string {
 
 /**
  * The stack the AgentCore CLI deploys. The AgentCoreApplication creates what agentcore/agentcore.json declares
- * (the `agent` runtime and its Memory); this stack adds what the archive needs around it:
+ * (the `agent` and `chatbot` runtimes and their Memory); this stack adds what the archive needs around them:
  *
- * - a VPC (public subnets with one NAT gateway, private subnets for the runtime and the migration Lambda,
- *   isolated subnets for the database), and the runtime switched to VPC mode
- * - PostgreSQL on RDS, its credentials in Secrets Manager
+ * - a VPC (public subnets with one NAT gateway, private subnets for the runtimes and the migration Lambda,
+ *   isolated subnets for the database), and both runtimes switched to VPC mode
+ * - PostgreSQL on RDS, with two users whose credentials are in Secrets Manager: the admin user, and
+ *   `archive_reader`, which can only read
  * - the S3 bucket for recordings (`audio/`) and Transcribe output (`transcripts/`)
- * - the runtime's permissions for S3, Transcribe, Comprehend and the database secret
- * - a custom resource that runs the archive's Alembic migrations inside the VPC on deploy
- * - the hosted front end (see web-frontend.ts)
+ * - the admin agent's permissions for S3, Transcribe, Comprehend and the admin database secret
+ * - the chatbot's permission to read the reader secret, and nothing else of the archive's
+ * - a custom resource that runs the archive's Alembic migrations inside the VPC on deploy, and keeps the
+ *   reader user and its grants up to date
+ * - the hosted front end, which only talks to the chatbot (see web-frontend.ts)
  */
 export class AgentCoreStack extends Stack {
   public readonly application: AgentCoreApplication;
@@ -98,6 +105,10 @@ export class AgentCoreStack extends Stack {
       vpc,
       description: 'Transcript agent runtime',
     });
+    const chatbotSecurityGroup = new ec2.SecurityGroup(this, 'ChatbotSecurityGroup', {
+      vpc,
+      description: 'Archive chatbot runtime',
+    });
     const migrateSecurityGroup = new ec2.SecurityGroup(this, 'MigrateSecurityGroup', {
       vpc,
       description: 'Archive database migrations',
@@ -122,8 +133,12 @@ export class AgentCoreStack extends Stack {
       removalPolicy: RemovalPolicy.SNAPSHOT,
     });
     database.connections.allowDefaultPortFrom(runtimeSecurityGroup, 'Transcript agent runtime');
+    database.connections.allowDefaultPortFrom(chatbotSecurityGroup, 'Archive chatbot runtime');
     database.connections.allowDefaultPortFrom(migrateSecurityGroup, 'Archive database migrations');
     const databaseSecret = database.secret!;
+    // The chatbot's own login. Attaching it to the instance adds the host, port and engine, so it has the same
+    // shape as the admin secret; the migration step creates the user with this password
+    const readerSecret = new rds.DatabaseSecret(this, 'ReaderSecret', { username: READER_USERNAME }).attach(database);
 
     // Recordings and transcripts. Kept when the stack is deleted, like the README says S3 files are.
     const bucket = new s3.Bucket(this, 'MeetingBucket', {
@@ -174,14 +189,17 @@ export class AgentCoreStack extends Stack {
       securityGroups: [migrateSecurityGroup],
       environment: {
         DATABASE_SECRET_ID: databaseSecret.secretArn,
+        READER_SECRET_ID: readerSecret.secretArn,
         MEETING_BUCKET_NAME: bucket.bucketName,
         MEETING_LOG_LEVEL: 'INFO',
       },
     });
     databaseSecret.grantRead(migrateFunction);
+    readerSecret.grantRead(migrateFunction);
     const migrations = new CustomResource(this, 'ArchiveMigrations', {
       serviceToken: new cr.Provider(this, 'MigrateProvider', { onEventHandler: migrateFunction }).serviceToken,
-      properties: { CodeHash: migrateHash },
+      // The reader secret's ARN is here too, so a replaced secret reruns the step that sets the user's password
+      properties: { CodeHash: migrateHash, ReaderSecret: readerSecret.secretArn },
     });
     migrations.node.addDependency(database);
 
@@ -208,27 +226,39 @@ export class AgentCoreStack extends Stack {
     runtime.addEnvironmentVariable('MEETING_BUCKET_NAME', bucket.bucketName);
     runtime.addEnvironmentVariable('DATABASE_SECRET_ID', databaseSecret.secretArn);
     // agentcore.json's networkConfig only takes literal subnet and security group IDs, so set VPC mode here
-    const cfnRuntime = runtime.resource.node.defaultChild as bedrockagentcore.CfnRuntime;
-    cfnRuntime.networkConfiguration = {
-      networkMode: 'VPC',
-      networkModeConfig: {
-        subnets: appSubnets.subnetIds,
-        securityGroups: [runtimeSecurityGroup.securityGroupId],
-      },
+    const useVpc = (target: typeof runtime, securityGroup: ec2.SecurityGroup) => {
+      const cfnRuntime = target.resource.node.defaultChild as bedrockagentcore.CfnRuntime;
+      cfnRuntime.networkConfiguration = {
+        networkMode: 'VPC',
+        networkModeConfig: { subnets: appSubnets.subnetIds, securityGroups: [securityGroup.securityGroupId] },
+      };
     };
+    useVpc(runtime, runtimeSecurityGroup);
     // Update the runtime only once the database schema is current
     runtime.resource.node.addDependency(migrations);
 
-    // The hosted front end (CloudFront, and the /api function that calls the runtime)
+    // The public chatbot: reads the archive as archive_reader, and gets no S3, Transcribe or Comprehend access.
+    // The archive's config reads MEETING_BUCKET_NAME when it loads, so it gets the name but no access to the bucket.
+    const chatbot = this.application.runtime(CHATBOT_RUNTIME_NAME);
+    chatbot.grantRead(readerSecret);
+    chatbot.addEnvironmentVariable('DATABASE_SECRET_ID', readerSecret.secretArn);
+    chatbot.addEnvironmentVariable('MEETING_BUCKET_NAME', bucket.bucketName);
+    useVpc(chatbot, chatbotSecurityGroup);
+    // The reader user and its grants exist only once the migration step has run
+    chatbot.resource.node.addDependency(migrations);
+
+    // The hosted front end (CloudFront, and the /api function that calls the chatbot)
     const web = new WebFrontend(this, 'Web', {
-      runtimeArn: runtime.runtimeArn,
-      meetingBucket: bucket,
+      runtimeArn: chatbot.runtimeArn,
       webDir: path.join(props.application.projectRoot, 'web'),
     });
-    runtime.grantInvoke(web.apiFunction);
+    chatbot.grantInvoke(web.apiFunction);
 
     new CfnOutput(this, 'MeetingBucketName', { value: bucket.bucketName });
     new CfnOutput(this, 'DatabaseSecretArn', { value: databaseSecret.secretArn });
+    new CfnOutput(this, 'ReaderSecretArn', { value: readerSecret.secretArn });
     new CfnOutput(this, 'DatabaseEndpoint', { value: database.dbInstanceEndpointAddress });
+    new CfnOutput(this, 'AgentRuntimeArn', { value: runtime.runtimeArn });
+    new CfnOutput(this, 'ChatbotRuntimeArn', { value: chatbot.runtimeArn });
   }
 }

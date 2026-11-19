@@ -511,10 +511,15 @@ def test_find_runtime_arn_prefers_the_env_var_then_agentcore_status(monkeypatch)
     assert client.find_runtime_arn() == "arn:from-env"
     monkeypatch.delenv("AGENT_RUNTIME_ARN")
     status = {"resources": [{"resourceType": "memory", "deploymentState": "deployed", "arn": "arn:memory"},
-                            {"resourceType": "runtime", "deploymentState": "deployed", "arn": RUNTIME_ARN}]}
+                            {"resourceType": "runtime", "name": "chatbot", "deploymentState": "deployed",
+                             "arn": "arn:chatbot"},
+                            {"resourceType": "runtime", "name": "agent", "deploymentState": "deployed",
+                             "arn": RUNTIME_ARN}]}
     finished = subprocess.CompletedProcess([], 0, stdout=json.dumps(status), stderr="")
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: finished)
+    # the terminal chat always picks the admin agent, never the website's chatbot
     assert client.find_runtime_arn() == RUNTIME_ARN
+    assert client.find_runtime_arn("chatbot", "CHATBOT_RUNTIME_ARN") == "arn:chatbot"
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, stdout="", stderr="no"))
     assert client.find_runtime_arn() is None
 

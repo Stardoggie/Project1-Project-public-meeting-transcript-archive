@@ -33,17 +33,19 @@ def find_agent_url() -> str | None:
     return None
 
 
-def find_runtime_arn() -> str | None:
-    """AGENT_RUNTIME_ARN if set, otherwise the deployed runtime that `agentcore status` reports for this project."""
-    if os.environ.get("AGENT_RUNTIME_ARN"):
-        return os.environ["AGENT_RUNTIME_ARN"]
+def find_runtime_arn(name: str = "agent", env_var: str = "AGENT_RUNTIME_ARN") -> str | None:
+    """The env var if set, otherwise the ARN of the deployed runtime called `name` that `agentcore status` reports.
+    The project has two runtimes: `agent` (the admin agent this chat uses) and `chatbot` (the website's)."""
+    if os.environ.get(env_var):
+        return os.environ[env_var]
     try:
         status = subprocess.run(["agentcore", "status", "--json"], cwd=PROJECT_DIR, capture_output=True, text=True, timeout=60)
         resources = json.loads(status.stdout).get("resources", [])
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     for resource in resources:
-        if resource.get("resourceType") == "runtime" and resource.get("deploymentState") == "deployed":
+        if (resource.get("resourceType") == "runtime" and resource.get("name") == name
+                and resource.get("deploymentState") == "deployed"):
             return resource.get("arn")
     return None
 
