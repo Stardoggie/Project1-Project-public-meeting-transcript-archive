@@ -31,6 +31,11 @@ The Runtime accepts a JSON object. `parse_payload()` reads:
 - `confirm` (boolean, optional) — answers a pending confirmation without a prompt. `true` runs the action; anything else cancels it.
 - `actorId` (string, optional) — identifies the end user in the session's checkpoints. Defaults to `"default"`.
 
+The clerks' agent also accepts `{"check_transcription": <meeting id>}` on its own: it runs the `check_transcription`
+tool directly, without the model, and answers with one `transcription_status` event (the tool's result without the
+transcript text). The terminal chat sends these while it waits for a transcription to finish. The public chatbot,
+a separate runtime, refuses them.
+
 The `session_id` is not in the body — it comes from the `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header (`context.session_id`); reuse it to continue a conversation. A request without the header gets a fresh session id
 of its own, so header-less callers never share a conversation or answer each other's confirmations; a pending
 confirmation can only be answered with the header.

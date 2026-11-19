@@ -103,7 +103,7 @@ def invoke(agent_url: str, session_id: str, payload: dict) -> list[dict]:
 
 def summarize(events: list[dict]) -> dict:
     """Pull out what the CLI shows: replies and full transcripts (in order), tools used, a pending confirmation,
-    an upload URL, errors."""
+    an upload URL, the meetings whose transcription just started, errors."""
     result = {
         "replies": [],
         "transcripts": [],
@@ -113,6 +113,7 @@ def summarize(events: list[dict]) -> dict:
         "upload_url": None,
         "upload_fields": None,
         "audio_key": None,
+        "transcriptions_started": [],
         "errors": []
     }
     for event in events:
@@ -136,6 +137,14 @@ def summarize(events: list[dict]) -> dict:
                 result["audio_key"] = handed_out.get("audio_key")
             except (ValueError, AttributeError):
                 pass
+        elif event.get("type") == "tool" and event.get("tool") == "start_transcription":
+            try:
+                started = json.loads(event["text"])
+            except (ValueError, TypeError):
+                continue
+            # a start that worked names its meeting; a refused one (no recording, say) has an error instead
+            if isinstance(started, dict) and started.get("meeting_id") and not started.get("error"):
+                result["transcriptions_started"].append(started["meeting_id"])
     return result
 
 

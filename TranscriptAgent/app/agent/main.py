@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import uuid
@@ -8,6 +9,7 @@ from langgraph.types import Command
 from graph import build_graph, close_dangling_tool_calls
 from model.load import load_model
 from parse import parse_payload
+from transcript_tools import as_id, check_transcription
 MEMORY_ID = os.getenv("MEMORY_AGENTMEMORY_ID")
 # Tool results are only a peek at what a tool returned; the agent's own replies are never shortened
 MAX_TOOL_EVENT_CHARS = 2000
@@ -53,8 +55,25 @@ def _session_id(context) -> str:
     return getattr(context, "session_id", None) or f"local-{uuid.uuid4().hex}"
 
 
+def transcription_status(meeting_id) -> dict:
+    """A transcription check the terminal chat asks for by itself while it waits, run without the model so it costs
+    no tokens. It's the check_transcription tool's result, which stores the transcript once the job is done."""
+    meeting_id = as_id(meeting_id)
+    if meeting_id is None:
+        return {"error": "check_transcription must be a meeting id"}
+    result = check_transcription.invoke({"meeting_id": meeting_id})
+    result.pop("transcript", None)  # the chat only needs the status; the transcript is shown when asked for
+    return {"type": "transcription_status", "meeting_id": meeting_id, **result}
+
+
 async def handle_request(payload, context, graph=graph):
-    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards."""
+    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards.
+    {"check_transcription": <meeting id>} from the terminal chat is answered without the model. Only this, the
+    clerks' agent, does that: the public chatbot is a separate runtime with its own entrypoint."""
+    if isinstance(payload, dict) and "check_transcription" in payload:
+        # the check talks to the database and AWS, so keep it off the event loop
+        yield await asyncio.to_thread(transcription_status, payload["check_transcription"])
+        return
     session_id = _session_id(context)
     try:
         async for event in run_turn(payload, session_id, graph=graph):
