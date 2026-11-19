@@ -1,4 +1,4 @@
-"""Request handling shared by both agents: main.py (the clerks' agent) and public_main.py (the read-only public one)."""
+"""Request handling for the clerks' agent (main.py): its streamed events, and the terminal chat's transcription checks."""
 import asyncio
 import logging
 import uuid

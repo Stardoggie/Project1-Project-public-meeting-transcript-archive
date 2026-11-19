@@ -9,15 +9,15 @@ export interface AgentCoreStackProps extends StackProps {
   application: AgentCoreApplicationProps;
 }
 
-/** The read-only runtime declared in agentcore/agentcore.json; the web page only ever talks to it. */
-const PUBLIC_RUNTIME_NAME = 'public_agent';
+/** The read-only chatbot declared in agentcore/agentcore.json; the web page only ever talks to it. */
+const CHATBOT_RUNTIME_NAME = 'chatbot';
 
 /**
  * The stack the AgentCore CLI deploys. Everything declared in agentcore/agentcore.json (both runtimes, their settings
  * and IAM policies, and the Memory) is created by the AgentCoreApplication construct. The runtimes use the existing
  * database, secret and S3 bucket named there.
  *
- * The only thing added here is the hosted web page (see web-frontend.ts), wired to `public_agent`.
+ * The only thing added here is the hosted web page (see web-frontend.ts), wired to the `chatbot`.
  */
 export class AgentCoreStack extends Stack {
   public readonly application: AgentCoreApplication;
@@ -26,12 +26,12 @@ export class AgentCoreStack extends Stack {
     super(scope, id, props);
     this.application = new AgentCoreApplication(this, 'Application', props.application);
 
-    // The hosted web page (CloudFront, and the /api function that calls the public agent)
-    const publicRuntime = this.application.runtime(PUBLIC_RUNTIME_NAME);
+    // The hosted web page (CloudFront, and the /api function that calls the chatbot)
+    const chatbot = this.application.runtime(CHATBOT_RUNTIME_NAME);
     const web = new WebFrontend(this, 'Web', {
-      runtimeArn: publicRuntime.runtimeArn,
+      runtimeArn: chatbot.runtimeArn,
       webDir: path.join(props.application.projectRoot, 'web'),
     });
-    publicRuntime.grantInvoke(web.apiFunction);
+    chatbot.grantInvoke(web.apiFunction);
   }
 }

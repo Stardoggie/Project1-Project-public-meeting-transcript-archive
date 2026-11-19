@@ -51,7 +51,7 @@ Without `--meeting`, the agent may ask which meeting the recording is for; the c
 answer, and the file is uploaded once it knows.
 
 The CLI looks for the clerks' agent on port 8080 only. Plain `agentcore dev` (without `--agent`) also starts the
-read-only `public_agent` on 8081, and the chat never connects to it by itself. If the agent is on another port, set
+read-only `chatbot` on 8081, and the chat never connects to it by itself. If the agent is on another port, set
 `AGENT_URL` (or `--agent-url`), e.g. `http://127.0.0.1:8085/invocations`.
 
 ## Deployed agent
@@ -62,7 +62,7 @@ the same, including uploads and confirmations:
 ```
 Requests are signed with your AWS credentials (the AWS CLI profile), so this mode needs boto3; the archive's `.venv`
 already has it, or `pip install boto3`. The CLI asks `agentcore status` for the deployed `agent` runtime (the clerks'
-one; it never picks the web page's read-only `public_agent`); set `AGENT_RUNTIME_ARN` to use a different one.
+one; it never picks the web page's read-only `chatbot`); set `AGENT_RUNTIME_ARN` to use a different one.
 
 ## Test
 `python -m pytest test_chat.py` (offline; needs pytest).

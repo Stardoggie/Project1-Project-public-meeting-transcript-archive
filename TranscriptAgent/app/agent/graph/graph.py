@@ -12,9 +12,9 @@ The nodes themselves live in nodes.py.
 import asyncio
 from typing import Literal
 from langgraph.graph import END, START, MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
-from transcript_tools import READ_TOOLS, TOOLS
-from .nodes import PUBLIC_PROMPT, confirm, make_agent_node, needs_confirmation
+from langgraph.prebuilt import ToolNode
+from transcript_tools import TOOLS
+from .nodes import confirm, make_agent_node, needs_confirmation
 
 
 def _needs_any_confirmation(calls: list) -> bool:
@@ -39,17 +39,5 @@ def build_graph(model, checkpointer=None):
     graph.add_node("confirm", confirm, destinations=("agent",))
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", route_after_agent, ["tools", "confirm", END])
-    graph.add_edge("tools", "agent")
-    return graph.compile(checkpointer=checkpointer)
-
-
-def build_read_only_graph(model, checkpointer=None):
-    """The public agent's graph: only the tools that read the archive, so nothing ever needs confirming."""
-    graph = StateGraph(MessagesState)
-    graph.add_node("agent", make_agent_node(model, READ_TOOLS, PUBLIC_PROMPT))
-    graph.add_node("tools", ToolNode(READ_TOOLS))
-    graph.add_edge(START, "agent")
-    # tools_condition goes to "tools" when the model called a tool, otherwise it ends the turn
-    graph.add_conditional_edges("agent", tools_condition)
     graph.add_edge("tools", "agent")
     return graph.compile(checkpointer=checkpointer)

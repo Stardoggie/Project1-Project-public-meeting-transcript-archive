@@ -510,15 +510,17 @@ def test_find_runtime_arn_prefers_the_env_var_then_agentcore_status(monkeypatch)
     monkeypatch.setenv("AGENT_RUNTIME_ARN", "arn:from-env")
     assert client.find_runtime_arn() == "arn:from-env"
     monkeypatch.delenv("AGENT_RUNTIME_ARN")
-    # the public agent comes first here, and is skipped: the terminal chat only ever talks to the clerks' agent
+    # the chatbot comes first here, and is skipped: the terminal chat only ever talks to the clerks' agent
     status = {"resources": [{"resourceType": "memory", "deploymentState": "deployed", "arn": "arn:memory"},
-                            {"resourceType": "runtime", "name": "public_agent", "deploymentState": "deployed",
-                             "arn": "arn:public"},
+                            {"resourceType": "runtime", "name": "chatbot", "deploymentState": "deployed",
+                             "arn": "arn:chatbot"},
                             {"resourceType": "runtime", "name": "agent", "deploymentState": "deployed",
                              "arn": RUNTIME_ARN}]}
     finished = subprocess.CompletedProcess([], 0, stdout=json.dumps(status), stderr="")
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: finished)
     assert client.find_runtime_arn() == RUNTIME_ARN
+    # the web page's server asks for the chatbot by name
+    assert client.find_runtime_arn("chatbot", "CHATBOT_RUNTIME_ARN") == "arn:chatbot"
     monkeypatch.setattr(client.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, stdout="", stderr="no"))
     assert client.find_runtime_arn() is None
 
@@ -535,7 +537,7 @@ def test_find_agent_url_only_tries_the_clerks_port(monkeypatch):
         tried.append(url)
         raise urllib.error.URLError("refused")
     monkeypatch.setattr(client.urllib.request, "urlopen", ping)
-    # with nothing on 8080 it gives up, rather than moving on to public_agent on 8081
+    # with nothing on 8080 it gives up, rather than moving on to the chatbot on 8081
     assert client.find_agent_url() is None
     assert tried == ["http://127.0.0.1:8080/ping"]
     monkeypatch.setattr(client.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(b'{"status": "Healthy"}'))

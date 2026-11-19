@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling ~= 1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chatbot"
+version = "0.1.0"
+description = "Read-only AgentCore chatbot that answers questions from the meeting transcript archive"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aws-opentelemetry-distro ~= 0.21.0",
+    "bedrock-agentcore~=1.22.0",
+    "botocore[crt] ~= 1.43.0",
+    "langchain~=1.4.0",
+    "langchain-aws~=1.7.5",
+    "langgraph~=1.2.11",
+    "opentelemetry-instrumentation-langchain~=0.62.3",
+    "public-meeting-transcript-archive",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.uv.sources]
+public-meeting-transcript-archive = { path = "../../../public_meeting_transcript_archive" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

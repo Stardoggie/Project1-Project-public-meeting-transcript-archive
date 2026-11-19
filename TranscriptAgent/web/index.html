@@ -53,15 +53,15 @@
 
   <main id="log" aria-live="polite">
     <div class="welcome">
-      Ask about governing bodies, meetings and transcripts, e.g. “What meetings does Springfield City Council have?”
-      or “Show me the transcript of the last budget hearing.”
+      Ask about the archive's public meetings and what was said in them, e.g. “What did the city council say about
+      parking this year?” or “Which meetings mentioned Main Street?” Answers name the meeting they come from.
     </div>
   </main>
 
   <footer id="composer">
     <div id="busy"></div>
     <form class="row" id="chat-form">
-      <textarea id="prompt" rows="1" placeholder="Message the archive… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <textarea id="prompt" rows="1" placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"></textarea>
       <button class="primary" id="send" type="submit">Send</button>
     </form>
   </footer>
@@ -80,7 +80,7 @@ function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-/** Just enough markdown for the agent's replies: bold and inline code. */
+/** Just enough markdown for the chatbot's replies: bold and inline code. */
 function format(text) {
   return escapeHtml(text)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -161,15 +161,10 @@ async function post(path, body, headers = {}) {
   }
 }
 
-async function send(payload, busyText = "The agent is working…") {
-  setBusy(busyText);
-  const result = await post("/api/chat", JSON.stringify(payload), { "Content-Type": "application/json" });
+async function send(prompt) {
+  setBusy("Looking through the archive…");
+  const result = await post("/api/chat", JSON.stringify({ prompt }), { "Content-Type": "application/json" });
   setBusy("");
-  await handle(result);
-}
-
-/** Show a turn's replies and transcripts. */
-async function handle(result) {
   for (const item of result.items || []) {
     if (item.kind === "reply") message("agent", item.text);
     else transcriptCard(item);
@@ -183,7 +178,7 @@ $("chat-form").addEventListener("submit", async (event) => {
   if (!text) return;
   $("prompt").value = "";
   message("user", text);
-  await send({ prompt: text });
+  await send(text);
 });
 
 $("prompt").addEventListener("keydown", (event) => {
@@ -207,7 +202,7 @@ async function init() {
   try {
     const response = await fetch("/api/status", { headers: await apiHeaders("") });
     const status = await response.json();
-    $("agent").textContent = status.agent;
+    $("agent").textContent = config ? "" : status.agent;
   } catch {}
   $("prompt").focus();
 }

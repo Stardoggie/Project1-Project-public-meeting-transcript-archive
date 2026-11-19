@@ -6,7 +6,9 @@ Both agents are LangGraph graphs running on Amazon Bedrock AgentCore.
 
 ## Layout
 - `public_meeting_transcript_archive/meeting_transcript/`: the archive's storage and AWS logic (SQLAlchemy models, store and service functions, migrations). There is no REST API; the agent calls these functions directly.
-- `TranscriptAgent/`: the AgentCore 1.0 project. The agent code is in `TranscriptAgent/app/agent/` (see its README).
+- `TranscriptAgent/`: the AgentCore 1.0 project. The clerks' agent's code is in `TranscriptAgent/app/agent/`, the
+  chatbot's in `TranscriptAgent/app/chatbot/`, the terminal chat in `TranscriptAgent/cli/` and the website in
+  `TranscriptAgent/web/` (each has a README).
 
 ## Install
 ### Requirements
@@ -58,7 +60,7 @@ cd TranscriptAgent
 agentcore dev --agent agent
 ```
 It listens on port 8080, where the terminal chat looks for it. Plain `agentcore dev` starts both runtimes: `agent` on
-8080 and the read-only `public_agent` on 8081.
+8080 and the read-only `chatbot` on 8081.
 Then chat with it from another, using the terminal chat (see `TranscriptAgent/cli/README.md`):
 ```
 cd TranscriptAgent/cli
@@ -71,22 +73,35 @@ Other clients can send prompts to `POST http://localhost:8080/invocations` with 
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation; a request without it
 starts a new conversation of its own).
 
+To try the website, start the chatbot in one terminal (port 8090 keeps it out of the terminal chat's way):
+```
+cd TranscriptAgent
+agentcore dev --agent chatbot --port 8090
+```
+Then start the local web server from another (see `TranscriptAgent/web/README.md`):
+```
+cd TranscriptAgent/web
+python server.py
+```
+and open http://127.0.0.1:8501.
+
 ## Deploy
 `agentcore deploy` in `TranscriptAgent/` deploys both agents to AgentCore Runtime (account and region in
-`agentcore/aws-targets.json`): `agent` for clerks and `public_agent` for the web page. The archive code is bundled
+`agentcore/aws-targets.json`): `agent` for clerks and `chatbot` for the web page. The archive code is bundled
 with them. The runtimes' settings are in `TranscriptAgent/agentcore/agentcore.json` (see the agent README), and they
 use the existing `TranscriptionDBSecret` secret and S3 bucket. Each runtime gets its own IAM managed policy:
 - `agent`: `meeting-transcript-archive` (copy in `iam/policy.json`): S3, Transcribe, Comprehend and the secret.
-- `public_agent`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret. It
-  also denies the clerks' Memory, since AgentCore gives every runtime access to it.
+- `chatbot`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret. It
+  also denies the clerks' Memory, since AgentCore gives every runtime access to it. The chatbot also opens every
+  database connection read-only, so the database itself refuses writes from it.
 
 Both policies must exist before deploying. Before the first deploy, the RDS security group must allow port 5432 from
 anywhere, since the runtimes have no fixed address (SSL and the password still protect it).
 
 The deploy also hosts the public web page, the only thing in the stack code
 (`TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts`): CloudFront serves `TranscriptAgent/web/index.html`, and its
-`/api/*` goes to a Lambda that calls `public_agent` and nothing else. The page's address is the stack's `SiteUrl`
-output (see `TranscriptAgent/web/README.md`). It has no sign-in because `public_agent` can only read the archive.
+`/api/*` goes to a Lambda that calls the `chatbot` and nothing else. The page's address is the stack's `SiteUrl`
+output (see `TranscriptAgent/web/README.md`). It has no sign-in because the chatbot can only read the archive.
 
 Clerks talk to the deployed `agent` with the terminal chat (needs boto3, which the archive's `.venv` has):
 ```
@@ -99,8 +114,9 @@ Logs: `agentcore logs runtime --name agent --since 15m`.
 ## Test
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
 - Agent graph: `uv run pytest tests` in `TranscriptAgent/app/agent/` (pytest is in its `dev` dependency group, which `uv sync` installs)
+- Chatbot: `uv run pytest tests` in `TranscriptAgent/app/chatbot/`
 
-Both need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
+All three need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
 
 ## Technology
 - Python (3.14 in the AgentCore runtime)

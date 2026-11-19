@@ -1,8 +1,9 @@
 /**
- * The hosted front end's API, behind CloudFront at /api/*. It calls the public agent, which can only read the archive.
- * There is no sign-in: each conversation is kept apart only by its session id, a random value the browser makes.
+ * The hosted front end's API, behind CloudFront at /api/*. It sends the page's questions to the read-only chatbot
+ * runtime. There is no sign-in: each conversation is kept apart only by its session id, a random value the browser
+ * makes.
  *
- *   GET  /api/status   which agent the page is talking to
+ *   GET  /api/status   that the API is up
  *   POST /api/chat     { "prompt": "..." }, with an X-Session-Id header
  *
  * The response streams: a space every few seconds while the agent works (so CloudFront's origin timeout doesn't cut
@@ -39,7 +40,7 @@ type Item =
   | { kind: 'reply'; text: string }
   | { kind: 'transcript'; title: unknown; meeting_date: unknown; transcript: unknown };
 
-/** The agent's streamed events, shaped like the local web server's responses. */
+/** The chatbot's streamed events, shaped like the local web server's responses: replies, transcripts, errors. */
 function summarize(events: AgentEvent[]) {
   const items: Item[] = [];
   const errors: string[] = [];
@@ -95,7 +96,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
   const path = event.rawPath;
 
   if (method === 'GET' && path === '/api/status') {
-    finish(200, { agent: 'public archive agent' });
+    finish(200, { agent: 'archive chatbot' });
     return;
   }
   if (method !== 'POST' || path !== '/api/chat') {
@@ -116,19 +117,20 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
     finish(400, { errors: ['The request body must be JSON'] });
     return;
   }
-  if (typeof request.prompt !== 'string' || request.prompt.length > MAX_PROMPT_CHARS) {
+  if (typeof request.prompt !== 'string' || !request.prompt.trim() || request.prompt.length > MAX_PROMPT_CHARS) {
     finish(400, { errors: [`Send a 'prompt' of up to ${MAX_PROMPT_CHARS} characters`] });
     return;
   }
+  const payload = { prompt: request.prompt };
 
   const stream = respond(200);
   const keepalive = setInterval(() => stream.write(' '), KEEPALIVE_MS);
   let result;
   try {
-    result = summarize(await invokeAgent(sessionId, { prompt: request.prompt }));
+    result = summarize(await invokeAgent(sessionId, payload));
   } catch (error) {
     console.error('InvokeAgentRuntime failed', error);
-    result = { errors: ['The agent could not be reached. Try again in a moment.'] };
+    result = { errors: ['The archive assistant could not be reached. Try again in a moment.'] };
   } finally {
     clearInterval(keepalive);
   }

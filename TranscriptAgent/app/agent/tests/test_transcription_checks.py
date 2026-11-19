@@ -3,7 +3,6 @@ import asyncio
 import serve
 import transcript_tools as t
 from test_graph import make_graph, new_body
-from test_public_agent import public_graph
 
 
 class FakeCheck:
@@ -45,10 +44,10 @@ def test_a_check_needs_a_real_meeting_id(monkeypatch):
     assert events[0]["error"] and check.asked == []
 
 
-def test_the_public_agent_refuses_a_check(monkeypatch):
+def test_a_check_is_refused_without_direct_checks(monkeypatch):
     check = FakeCheck({"status": "COMPLETED"})
     monkeypatch.setattr(serve, "check_transcription", check)
-    graph, _ = public_graph()
+    graph, _ = make_graph()
     events = events_for({"check_transcription": 7}, graph, direct_checks=False)
     assert "prompt" in events[0]["error"] and check.asked == []
 

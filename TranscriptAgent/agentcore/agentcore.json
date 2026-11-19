@@ -30,11 +30,11 @@
       ]
     },
     {
-      "name": "public_agent",
+      "name": "chatbot",
       "build": "CodeZip",
       "modelProvider": "Bedrock",
-      "entrypoint": "public_main.py",
-      "codeLocation": "app/agent",
+      "entrypoint": "main.py",
+      "codeLocation": "app/chatbot",
       "runtimeVersion": "PYTHON_3_14",
       "protocol": "HTTP",
       "envVars": [

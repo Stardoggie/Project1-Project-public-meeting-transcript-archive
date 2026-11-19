@@ -1,4 +1,4 @@
-from meeting_transcript.meetings.models import ListMeetingsDTO,Meetings,CreateMeetingsDTO,Status,UpdateMeetingsDTO
+from meeting_transcript.meetings.models import ListMeetingsDTO,Meetings,CreateMeetingsDTO,Status,UpdateMeetingsDTO,TranscriptMatchDTO
 from pydantic import ValidationError,TypeAdapter
 from meeting_transcript.extensions import db
 from meeting_transcript.meetings.models_db import Meeting,Entities,KeyPhrases
@@ -55,6 +55,47 @@ def list_meeting(meeting_id:int)->ListMeetingsDTO | None:
                     entity.entity
                     for entity in row.entities
                 ])
+
+
+SNIPPET_RADIUS = 150  # characters kept on each side of a match
+MAX_SNIPPETS = 3
+
+
+def _snippets(transcript:str, query:str)->list[str]:
+    """up to MAX_SNIPPETS excerpts around case-insensitive matches of query, without overlapping"""
+    lowered, needle = transcript.lower(), query.lower()
+    snippets, start = [], 0
+    while len(snippets) < MAX_SNIPPETS:
+        hit = lowered.find(needle, start)
+        if hit < 0:
+            break
+        begin = max(0, hit - SNIPPET_RADIUS)
+        end = min(len(transcript), hit + len(needle) + SNIPPET_RADIUS)
+        snippet = transcript[begin:end].strip()
+        snippets.append(("…" if begin > 0 else "") + snippet + ("…" if end < len(transcript) else ""))
+        start = end
+    return snippets
+
+
+def search_transcripts(query:str, body_id:int | None = None, limit:int = 10)->list[TranscriptMatchDTO]:
+    """
+        meetings whose transcript contains query (case-insensitive), newest first, with excerpts around the matches
+        body_id limits the search to one governing body
+    """
+    query = query.strip()
+    if not query:
+        return []
+    #escape LIKE's wildcards so the text is matched literally
+    pattern = "%" + query.replace("\\","\\\\").replace("%","\\%").replace("_","\\_") + "%"
+    stmt = (select(Meeting).where(Meeting.transcript.ilike(pattern, escape="\\"))
+            .options(selectinload(Meeting.body))
+            .order_by(Meeting.meeting_date.desc(), Meeting.id.desc())
+            .limit(max(1, min(limit, 25))))
+    if body_id is not None:
+        stmt = stmt.where(Meeting.body_id == body_id)
+    rows = db.session.execute(stmt).scalars()
+    return [TranscriptMatchDTO(id=row.id,title=row.title,governing_body=row.body.name,meeting_date=row.meeting_date,
+                               snippets=_snippets(row.transcript,query)) for row in rows]
 
 
 def create_meeting(body_id:int, meeting:dict)-> Meetings:

@@ -8,13 +8,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 # `agentcore dev --agent agent` serves the clerks' agent on 8080. Only that port is tried, because plain
-# `agentcore dev` also starts the read-only public_agent on 8081 and the chat must never end up there.
+# `agentcore dev` also starts the read-only chatbot on 8081 and the chat must never end up there.
 LOCAL_AGENT_URL = "http://127.0.0.1:8080"
 # The AgentCore project folder (TranscriptAgent/), where `agentcore status` knows what is deployed
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 # A turn can run several tools, so give the deployed agent as long to answer as the local one
 DEPLOYED_READ_TIMEOUT_SECONDS = 300
-CLERKS_RUNTIME = "agent"  # the runtime with every tool; public_agent is the web page's read-only one
+CLERKS_RUNTIME = "agent"  # the runtime with every tool; chatbot is the web page's read-only one
 
 
 class DeployedAgentError(Exception):
@@ -34,19 +34,19 @@ def find_agent_url() -> str | None:
     return None
 
 
-def find_runtime_arn() -> str | None:
-    """AGENT_RUNTIME_ARN if set, otherwise the clerks' `agent` runtime as `agentcore status` reports it (never the
-    read-only `public_agent`)."""
-    if os.environ.get("AGENT_RUNTIME_ARN"):
-        return os.environ["AGENT_RUNTIME_ARN"]
+def find_runtime_arn(name: str = CLERKS_RUNTIME, env_var: str = "AGENT_RUNTIME_ARN") -> str | None:
+    """The env var if set, otherwise the deployed runtime called `name` as `agentcore status` reports it. The terminal
+    chat always asks for the clerks' `agent`, never the web page's read-only `chatbot`."""
+    if os.environ.get(env_var):
+        return os.environ[env_var]
     try:
         status = subprocess.run(["agentcore", "status", "--json"], cwd=PROJECT_DIR, capture_output=True, text=True, timeout=60)
         resources = json.loads(status.stdout).get("resources", [])
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     for resource in resources:
-        is_clerks_agent = resource.get("resourceType") == "runtime" and resource.get("name") == CLERKS_RUNTIME
-        if is_clerks_agent and resource.get("deploymentState") == "deployed":
+        is_wanted_runtime = resource.get("resourceType") == "runtime" and resource.get("name") == name
+        if is_wanted_runtime and resource.get("deploymentState") == "deployed":
             return resource.get("arn")
     return None
 
