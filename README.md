@@ -91,11 +91,18 @@ and open http://127.0.0.1:8501.
 with them. The runtimes' settings are in `TranscriptAgent/agentcore/agentcore.json` (see the agent README), and they
 use the existing `TranscriptionDBSecret` secret and S3 bucket. Each runtime gets its own IAM managed policy:
 - `agent`: `meeting-transcript-archive` (copy in `iam/policy.json`): S3, Transcribe, Comprehend and the secret.
-- `chatbot`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret. It
-  also denies the clerks' Memory, since AgentCore gives every runtime access to it. The chatbot also opens every
-  database connection read-only, so the database itself refuses writes from it.
+- `chatbot`: `meeting-transcript-public-agent` (copy in `iam/public-agent-policy.json`): only the secret and its
+  Bedrock Guardrail, and it refuses any model call made without a guardrail. It also denies the clerks' Memory, since
+  AgentCore gives every runtime access to it. The chatbot also opens every database connection read-only, so the
+  database itself refuses writes from it.
 
-Both policies must exist before deploying. Before the first deploy, the RDS security group must allow port 5432 from
+Both policies must exist before deploying, and so must the chatbot's guardrail (see the chatbot README):
+```
+aws bedrock create-guardrail --cli-input-json file://iam/chatbot-guardrail.json --region us-east-1
+aws bedrock create-guardrail-version --guardrail-identifier <guardrailId from the first command> --region us-east-1
+```
+Put the guardrail's id and version in the chatbot's `GUARDRAIL_ID` and `GUARDRAIL_VERSION` in `agentcore.json`.
+Until then the deployed chatbot won't start. Before the first deploy, the RDS security group must allow port 5432 from
 anywhere, since the runtimes have no fixed address (SSL and the password still protect it).
 
 The deploy also hosts the public web page, the only thing in the stack code

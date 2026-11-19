@@ -11,6 +11,29 @@
             "Resource": "arn:aws:secretsmanager:us-east-1:397345411365:secret:TranscriptionDBSecret-*"
         },
         {
+            "Sid": "UseGuardrail",
+            "Effect": "Allow",
+            "Action": "bedrock:ApplyGuardrail",
+            "Resource": "arn:aws:bedrock:us-east-1:397345411365:guardrail/*"
+        },
+        {
+            "Sid": "NoModelCallsWithoutGuardrail",
+            "Effect": "Deny",
+            "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:InvokeModelWithResponseStream"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:*::foundation-model/*",
+                "arn:aws:bedrock:*:397345411365:inference-profile/*"
+            ],
+            "Condition": {
+                "ArnNotLike": {
+                    "bedrock:GuardrailIdentifier": "arn:aws:bedrock:us-east-1:397345411365:guardrail/*"
+                }
+            }
+        },
+        {
             "Sid": "NoClerkConversations",
             "Effect": "Deny",
             "Action": "bedrock-agentcore:*",

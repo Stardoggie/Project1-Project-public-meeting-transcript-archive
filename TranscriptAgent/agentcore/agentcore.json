@@ -49,6 +49,14 @@
         {
           "name": "AWS_REGION",
           "value": "us-east-1"
+        },
+        {
+          "name": "GUARDRAIL_ID",
+          "value": "5klv8gt1ktky"
+        },
+        {
+          "name": "GUARDRAIL_VERSION",
+          "value": "1"
         }
       ],
       "additionalPolicies": [

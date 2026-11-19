@@ -1,12 +1,13 @@
 """Read-only tools for the public chatbot: they look things up in the archive and never change anything.
 
-The Flask app is created read-only, so the database refuses writes on these connections.
+The Flask app is created read-only: it only sends SELECT and SHOW, and the database refuses writes on its
+connections anyway.
 """
 import functools
 import logging
 from langchain_core.tools import tool as _lc_tool
 from sqlalchemy.exc import SQLAlchemyError
-from meeting_transcript.app import create_app
+from meeting_transcript.app import ReadOnlyError, create_app
 from meeting_transcript.extensions import db
 from meeting_transcript.governing_body import store as bodies
 from meeting_transcript.governing_body.models_db import GoverningBody
@@ -33,7 +34,7 @@ def _dump(value):
 
 def _database_error(e: SQLAlchemyError) -> str:
     """A short message for a database error; the full one names tables and SQL, so it stays in the log."""
-    if getattr(getattr(e, "orig", None), "sqlstate", None) == READ_ONLY_VIOLATION:
+    if isinstance(e, ReadOnlyError) or getattr(getattr(e, "orig", None), "sqlstate", None) == READ_ONLY_VIOLATION:
         return "This assistant can only read the archive; it can't change anything."
     return "The archive's database couldn't complete that request."
 

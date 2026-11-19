@@ -8,11 +8,34 @@ It's a LangGraph graph on Amazon Bedrock AgentCore Runtime, like the clerks' age
 
 ## Read-only
 - Every tool only reads, so there is no confirmation step.
-- Its Flask app is created with `create_app(read_only=True)`, so every database transaction it opens is read-only and
-  Postgres refuses writes (`tools.py`).
+- Its Flask app is created with `create_app(read_only=True)` (`tools.py`), which stops writes twice over:
+  - the app only sends `SELECT` and `SHOW`. Anything else, including a `SET` that could switch read-only off, is
+    refused before it reaches the database;
+  - every transaction it opens is read-only, so Postgres refuses writes anyway (for example `SELECT ... FOR UPDATE`).
+- `tests/test_chatbot.py` checks both, and that only the read-only tools are offered.
 - Its runtime's IAM policy (`meeting-transcript-public-agent`, copy in `iam/public-agent-policy.json`) only lets it
   read the database secret. It has no S3, Transcribe or Comprehend access, and it's denied the clerks' AgentCore
   Memory.
+
+## Guardrail
+A Bedrock Guardrail (`meeting-transcript-public-chatbot`, definition in `iam/chatbot-guardrail.json`) checks every
+visitor's question and every answer:
+- prompt attacks (attempts to override the chatbot's instructions) in questions
+- hate, insults, sexual content, violence and misconduct: strictly in questions, at medium strength in answers,
+  since answers can quote meetings that discuss crime
+- off-limits topics: voting advice and political opinions, and legal advice about someone's own situation
+- sensitive numbers in answers (Social Security, tax, passport, driver's licence, card, bank, PIN and phone numbers)
+  are replaced with a placeholder. People's names stay, since answers must say who said what.
+
+A blocked question or answer is replaced with the guardrail's own message, and the chatbot logs that it happened
+(without the visitor's text). The guardrail doesn't check what the tools return: transcripts are long and often
+discuss crime or name people, which the filters would flag. Full transcripts shown with `show_full_transcript` go to
+the visitor without passing through it.
+
+`model/load.py` reads `GUARDRAIL_ID` and `GUARDRAIL_VERSION`. Settings that are only half there, that don't look like
+a guardrail id, or that use `DRAFT` stop the chatbot from starting. The chatbot's IAM policy also refuses model calls
+without a guardrail. To change the guardrail, update it in Bedrock, publish a new version, and set
+`GUARDRAIL_VERSION` to it.
 
 ## Tools
 | Tool | What it does |
@@ -37,6 +60,8 @@ calls and results, and `{"type": "transcript", ...}` for a full transcript.
 | `DATABASE_URL` | One of these two | Postgres URL; when set it's used instead of the secret |
 | `AWS_REGION` | Yes | Region for Bedrock and Secrets Manager |
 | `MEETING_BUCKET_NAME` | Yes | Read by the archive's config when it loads; the chatbot never uses the bucket |
+| `GUARDRAIL_ID` | Deployed: yes | The Bedrock Guardrail's id or ARN. Leave it and `GUARDRAIL_VERSION` unset to run locally without one |
+| `GUARDRAIL_VERSION` | Deployed: yes | A published version number of the guardrail, never `DRAFT` |
 
 ## Run and test locally
 `agentcore dev --agent chatbot --port 8090` in `TranscriptAgent/` runs it, and `python server.py` in

@@ -1,0 +1,57 @@
+{
+    "name": "meeting-transcript-public-chatbot",
+    "description": "The public chatbot's guardrail: prompt attacks, harmful content, off-limits topics, and sensitive numbers masked in replies.",
+    "contentPolicyConfig": {
+        "filtersConfig": [
+            { "type": "PROMPT_ATTACK", "inputStrength": "HIGH", "outputStrength": "NONE" },
+            { "type": "HATE", "inputStrength": "HIGH", "outputStrength": "MEDIUM" },
+            { "type": "INSULTS", "inputStrength": "HIGH", "outputStrength": "MEDIUM" },
+            { "type": "SEXUAL", "inputStrength": "HIGH", "outputStrength": "MEDIUM" },
+            { "type": "VIOLENCE", "inputStrength": "HIGH", "outputStrength": "MEDIUM" },
+            { "type": "MISCONDUCT", "inputStrength": "HIGH", "outputStrength": "MEDIUM" }
+        ]
+    },
+    "topicPolicyConfig": {
+        "topicsConfig": [
+            {
+                "name": "Voting advice and political opinions",
+                "definition": "Telling someone how to vote, which candidate, official, party or ballot measure to support, or giving the assistant's own opinion of officials or political decisions.",
+                "examples": [
+                    "Who should I vote for in the council election?",
+                    "Should I support the parks bond measure?",
+                    "Is the mayor doing a good job?",
+                    "Which council member is the best?"
+                ],
+                "type": "DENY"
+            },
+            {
+                "name": "Legal advice",
+                "definition": "Advice about a person's own legal situation: their rights, whether to sue or appeal, how to fight a fine or ruling, or what they should do legally.",
+                "examples": [
+                    "Can I sue the city over my parking ticket?",
+                    "Do I need a lawyer for my zoning appeal?",
+                    "How do I get out of the fine the council approved?"
+                ],
+                "type": "DENY"
+            }
+        ]
+    },
+    "sensitiveInformationPolicyConfig": {
+        "piiEntitiesConfig": [
+            { "type": "US_SOCIAL_SECURITY_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "US_INDIVIDUAL_TAX_IDENTIFICATION_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "US_PASSPORT_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "DRIVER_ID", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "CREDIT_DEBIT_CARD_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "CREDIT_DEBIT_CARD_CVV", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "CREDIT_DEBIT_CARD_EXPIRY", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "US_BANK_ACCOUNT_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "US_BANK_ROUTING_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "INTERNATIONAL_BANK_ACCOUNT_NUMBER", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "PIN", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" },
+            { "type": "PHONE", "action": "ANONYMIZE", "inputAction": "NONE", "outputAction": "ANONYMIZE" }
+        ]
+    },
+    "blockedInputMessaging": "I can only help with questions about the archive's public meetings. Try asking about a meeting, a council or board, or something that was discussed.",
+    "blockedOutputsMessaging": "Sorry, I can't give that answer. Try asking about a specific meeting or topic in the archive."
+}

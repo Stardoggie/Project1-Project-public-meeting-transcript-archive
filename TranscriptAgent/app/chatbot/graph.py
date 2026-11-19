@@ -5,11 +5,13 @@
 
 Every tool only reads, so there is no confirmation step.
 """
+import logging
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from prompt import SYSTEM_PROMPT
 from tools import TOOLS
+log = logging.getLogger(__name__)
 INTERRUPTED = "Not run: the previous request ended before this tool ran."
 
 
@@ -37,6 +39,9 @@ def make_agent_node(model):
     async def agent(state: MessagesState):
         history = [_for_model(m) for m in state["messages"]]
         reply = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT), *history])
+        if reply.response_metadata.get("stopReason") == "guardrail_intervened":
+            # the reply is then the guardrail's blocked message; the visitor's text isn't logged
+            log.warning("The guardrail blocked a question or an answer")
         return {"messages": [reply]}
 
     return agent
