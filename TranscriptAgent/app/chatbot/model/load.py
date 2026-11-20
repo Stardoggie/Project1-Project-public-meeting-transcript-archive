@@ -35,10 +35,12 @@ def guardrail_config() -> dict | None:
 def load_model() -> ChatBedrockConverse:
     """Get Bedrock model client using IAM credentials.
 
-    With a guardrail, guard_last_turn_only has it check the visitor's newest message and every reply, but not tool
-    results: transcripts are long (each check is billed by length) and often discuss crime or name people, which
-    the filters would flag.
+    With a guardrail, the agent node marks the visitor's newest question as the only input it checks (see
+    graph.history_for_model); every reply is checked too. Tool results aren't: transcripts are long (each check is
+    billed by length) and often discuss crime or name people, which the filters would flag.
+
+    langchain_aws's own guard_last_turn_only isn't used: it rewrites whichever user turn is last on every call (adding
+    a "[tool_result]" block to tool results), so earlier messages change between calls, and Claude then rejects the
+    signed thinking blocks that were made after them.
     """
-    guardrail = guardrail_config()
-    return ChatBedrockConverse(model=MODEL_ID, max_tokens=MAX_TOKENS, guardrail_config=guardrail,
-                               guard_last_turn_only=guardrail is not None)
+    return ChatBedrockConverse(model=MODEL_ID, max_tokens=MAX_TOKENS, guardrail_config=guardrail_config())
