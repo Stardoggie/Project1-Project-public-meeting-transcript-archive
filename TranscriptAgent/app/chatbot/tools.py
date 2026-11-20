@@ -5,8 +5,11 @@ connections anyway.
 """
 import functools
 import logging
+from datetime import date
 from langchain_core.tools import tool as _lc_tool
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 from meeting_transcript.app import ReadOnlyError, create_app
 from meeting_transcript.extensions import db
 from meeting_transcript.governing_body import store as bodies
@@ -16,6 +19,8 @@ from meeting_transcript.meetings.models_db import Meeting
 from meeting_transcript.analysis import store as analysis
 from meeting_transcript.transcription import store as transcripts
 MAX_TRANSCRIPT_CHARS = 40_000
+MAX_RECENT_MEETINGS = 10
+RECENT_KEY_PHRASES = 5
 # Postgres's code for a write attempted in a read-only transaction
 READ_ONLY_VIOLATION = "25006"
 log = logging.getLogger(__name__)
@@ -198,3 +203,25 @@ TOOLS = [
     list_governing_bodies, get_governing_body, search_meetings, get_meeting, search_transcripts,
     get_transcript, show_full_transcript, get_trending_entities
 ]
+
+
+# --- for the website, not the model ---
+
+def _recent_meetings(limit: int, today: date) -> list[dict]:
+    stmt = (select(Meeting).where(Meeting.meeting_date <= today)
+            .options(selectinload(Meeting.body), selectinload(Meeting.keys))
+            .order_by(Meeting.meeting_date.desc(), Meeting.id.desc()).limit(limit))
+    return [{"id": m.id, "title": m.title, "governing_body": m.body.name, "meeting_date": m.meeting_date.isoformat(),
+             "status": m.status, "transcript_available": m.transcript_available,
+             "key_phrases": [k.phrase for k in m.keys][:RECENT_KEY_PHRASES]}
+            for m in db.session.execute(stmt).scalars()]
+
+
+def recent_meetings(limit: int = 3, today: date | None = None) -> list[dict] | dict:
+    """The latest meetings that have taken place (dated today or earlier), newest first, for the website's front page.
+
+    Meetings dated in the future are left out: they haven't happened yet.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_RECENT_MEETINGS:
+        return {"error": "bad_request", "detail": f"recent_meetings must be a number from 1 to {MAX_RECENT_MEETINGS}"}
+    return _run(_recent_meetings, limit, today or date.today())

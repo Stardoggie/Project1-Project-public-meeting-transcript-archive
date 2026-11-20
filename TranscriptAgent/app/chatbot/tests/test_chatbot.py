@@ -1,5 +1,6 @@
 """The chatbot's read-only tools, its graph, and that it can't change the archive."""
 import asyncio
+from datetime import date
 import psycopg
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -191,3 +192,40 @@ def test_the_chatbot_refuses_a_transcription_check():
         return [event async for event in main.handle_request({"check_transcription": 7}, Context(), graph=graph)]
     events = asyncio.run(collect())
     assert len(events) == 1 and "prompt" in events[0]["error"]
+
+
+# --- the website's recent meetings ---
+
+def test_recent_meetings_are_the_latest_held_newest_first(archive):
+    found = t.recent_meetings(2, today=date(2026, 11, 19))
+    assert [(m["title"], m["meeting_date"], m["governing_body"]) for m in found] == [
+        ("Regular Session", "2026-04-01", "Springfield City Council"),
+        ("Budget Hearing", "2026-03-04", "Springfield City Council"),
+    ]
+    assert found[1]["transcript_available"] and not found[0]["transcript_available"]
+
+
+def test_recent_meetings_leave_out_meetings_not_held_yet(archive):
+    found = t.recent_meetings(3, today=date(2026, 3, 10))
+    assert [m["title"] for m in found] == ["Budget Hearing", "Parks Review"]
+
+
+@pytest.mark.parametrize("limit", [0, 11, "3", True, None])
+def test_recent_meetings_refuse_a_bad_count(limit):
+    assert t.recent_meetings(limit)["error"] == "bad_request"
+
+
+def test_the_chatbot_answers_recent_meetings_without_the_model(archive):
+    import main
+
+    class Context:
+        session_id = "chatbot-recent-0123456789abcdef0123456"
+
+    graph = build_graph(ScriptedModel(responses=[]), InMemorySaver())  # a model call would fail the test
+
+    async def collect(payload):
+        return [event async for event in main.handle_request(payload, Context(), graph=graph)]
+    events = asyncio.run(collect({"recent_meetings": 3}))
+    assert len(events) == 1 and events[0]["type"] == "recent_meetings"
+    assert len(events[0]["meetings"]) == 3
+    assert "error" in asyncio.run(collect({"recent_meetings": 50}))[0]

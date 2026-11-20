@@ -5,6 +5,8 @@
  *
  *   GET  /api/status   that the API is up
  *   POST /api/chat     { "prompt": "..." }, with an X-Session-Id header
+ *   POST /api/recent   the latest meetings, for the page's front (no body; X-Session-Id header). The chatbot looks
+ *                      them up without the model.
  *
  * The response streams: a space every few seconds while the agent works (so CloudFront's origin timeout doesn't cut
  * a long turn off), then one JSON object. JSON.parse ignores the leading spaces.
@@ -25,6 +27,7 @@ declare const awslambda: {
 const RUNTIME_ARN = process.env.RUNTIME_ARN!;
 const KEEPALIVE_MS = 10_000;
 const MAX_PROMPT_CHARS = 20_000;
+const RECENT_MEETINGS = 3;
 const SESSION_ID = /^[A-Za-z0-9-]{33,100}$/;
 
 const agentcore = new BedrockAgentCoreClient({});
@@ -99,7 +102,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
     finish(200, { agent: 'archive chatbot' });
     return;
   }
-  if (method !== 'POST' || path !== '/api/chat') {
+  if (method !== 'POST' || (path !== '/api/chat' && path !== '/api/recent')) {
     finish(404, { errors: ['Not found'] });
     return;
   }
@@ -107,6 +110,18 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
   const sessionId = header(event, 'X-Session-Id') ?? '';
   if (!SESSION_ID.test(sessionId)) {
     finish(400, { errors: ['Missing or invalid X-Session-Id header'] });
+    return;
+  }
+  if (path === '/api/recent') {
+    try {
+      const events = await invokeAgent(sessionId, { recent_meetings: RECENT_MEETINGS });
+      const found = events.find((e) => e.type === 'recent_meetings');
+      const errors = events.filter((e) => e.error).map((e) => String(e.error));
+      finish(200, { meetings: Array.isArray(found?.meetings) ? found.meetings : [], errors });
+    } catch (error) {
+      console.error('InvokeAgentRuntime failed', error);
+      finish(200, { meetings: [], errors: ['The recent meetings could not be loaded.'] });
+    }
     return;
   }
   let request: Record<string, unknown>;

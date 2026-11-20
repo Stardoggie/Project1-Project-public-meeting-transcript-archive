@@ -53,6 +53,11 @@ without a guardrail. To change the guardrail, update it in Bedrock, publish a ne
 characters; reuse it to continue a conversation). The response streams `data:` events: the model's replies, tool
 calls and results, and `{"type": "transcript", ...}` for a full transcript.
 
+`{"recent_meetings": n}` on its own (n from 1 to 10) answers with one `{"type": "recent_meetings", "meetings": [...]}`
+event: the n latest meetings dated today or earlier, newest first, with their governing body, status, whether a
+transcript exists and a few key phrases. It reads the archive directly, without the model; the website's front page
+uses it.
+
 ## Environment variables
 | Variable | Required | Description |
 | --- | --- | --- |

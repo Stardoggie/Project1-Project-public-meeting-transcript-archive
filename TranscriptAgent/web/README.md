@@ -2,6 +2,11 @@
 
 One page, `index.html`, where the public asks questions about the archive's meetings and reads or downloads full
 transcripts. It talks only to the **read-only chatbot** (`app/chatbot`), which can't add, change or delete anything.
+
+When it opens, it shows the three most recent meetings (dated today or earlier, newest first) in a column to the
+right of the chat, or in a strip above it that scrolls sideways on narrow screens. Each has buttons that ask the
+chatbot to summarize it or show its transcript. The page gets them from `POST /api/recent`, which sends
+the chatbot `{"recent_meetings": 3}`; the chatbot looks them up in the archive without the model.
 Managing meetings and uploading recordings is done with the admin agent from the terminal chat (`../cli`).
 
 It runs in two ways.

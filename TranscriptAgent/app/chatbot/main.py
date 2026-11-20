@@ -1,4 +1,5 @@
 """AgentCore entrypoint for the public, read-only chatbot behind the archive's website."""
+import asyncio
 import logging
 import uuid
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -7,6 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from graph import build_graph, close_dangling_tool_calls
 from model.load import load_model
 from parse import parse_payload
+from tools import recent_meetings
 # Tool results are only a peek at what a tool returned; the chatbot's own replies are never shortened
 MAX_TOOL_EVENT_CHARS = 2000
 
@@ -72,8 +74,23 @@ async def run_turn(payload, session_id: str, graph=graph):
             yield event
 
 
+async def recent_meetings_event(limit) -> dict:
+    """The website's list of the latest meetings, straight from the archive; the model isn't involved."""
+    found = await asyncio.to_thread(recent_meetings, limit)
+    if isinstance(found, dict):
+        return {"error": found["detail"]}
+    return {"type": "recent_meetings", "meetings": found}
+
+
 async def handle_request(payload, context, graph=graph):
-    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards."""
+    """One request; a header-less one is a one-off conversation, so its checkpoints are dropped afterwards.
+
+    {"recent_meetings": n} on its own answers with the n latest meetings (one recent_meetings event) without the
+    model, for the website's front page.
+    """
+    if isinstance(payload, dict) and set(payload) == {"recent_meetings"}:
+        yield await recent_meetings_event(payload["recent_meetings"])
+        return
     session_id = _session_id(context)
     try:
         async for event in run_turn(payload, session_id, graph=graph):

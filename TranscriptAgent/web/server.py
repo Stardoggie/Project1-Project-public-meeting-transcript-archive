@@ -23,6 +23,7 @@ PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 # Outside the 8080-8089 range the terminal chat scans, so the terminal chat never finds the chatbot by mistake
 CHATBOT_URL = "http://127.0.0.1:8090/invocations"
 MAX_PROMPT_CHARS = 20_000
+RECENT_MEETINGS = 3  # shown on the page when it opens
 
 
 class Chatbot:
@@ -61,21 +62,31 @@ class Chatbot:
                 events.append(json.loads(line[6:]))
         return events
 
-    def ask(self, session_id: str, prompt: str) -> dict:
-        """One question, shaped for the page: replies and full transcripts in order, and errors."""
-        payload = {"prompt": prompt}
+    def _events(self, session_id: str, payload: dict) -> tuple[list[dict], list[str]]:
+        """The chatbot's events for one request, or the reason it couldn't be called."""
         try:
             if self.runtime_arn:
-                events = self._invoke_deployed(session_id, payload)
-            else:
-                events = invoke(self.agent_url, session_id, payload)
+                return self._invoke_deployed(session_id, payload), []
+            return invoke(self.agent_url, session_id, payload), []
         except urllib.error.HTTPError as e:
-            return {"errors": [f"The chatbot returned an error: HTTP {e.code} {e.reason}."]}
+            return [], [f"The chatbot returned an error: HTTP {e.code} {e.reason}."]
         except (urllib.error.URLError, OSError) as e:
-            return {"errors": [f"Can't reach the chatbot ({e}). Start it with "
-                               "`agentcore dev --agent chatbot --port 8090` in TranscriptAgent/."]}
+            return [], [f"Can't reach the chatbot ({e}). Start it with "
+                        "`agentcore dev --agent chatbot --port 8090` in TranscriptAgent/."]
         except Exception as e:  # botocore errors (credentials, access denied, throttling)
-            return {"errors": [f"The deployed chatbot couldn't be called: {e}"]}
+            return [], [f"The deployed chatbot couldn't be called: {e}"]
+
+    def recent(self, session_id: str) -> dict:
+        """The latest meetings for the page's front, looked up without the model."""
+        events, errors = self._events(session_id, {"recent_meetings": RECENT_MEETINGS})
+        meetings = next((e["meetings"] for e in events if e.get("type") == "recent_meetings"), [])
+        return {"meetings": meetings, "errors": errors + [e["error"] for e in events if e.get("error")]}
+
+    def ask(self, session_id: str, prompt: str) -> dict:
+        """One question, shaped for the page: replies and full transcripts in order, and errors."""
+        events, errors = self._events(session_id, {"prompt": prompt})
+        if errors:
+            return {"errors": errors}
         result = summarize(events)
         items = []
         for kind, value in result["items"]:
@@ -129,12 +140,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self._same_origin():
             self._json(HTTPStatus.FORBIDDEN, {"errors": ["Cross-site requests are not allowed"]})
             return
-        if self.path != "/api/chat":
+        if self.path not in ("/api/chat", "/api/recent"):
             self._json(HTTPStatus.NOT_FOUND, {"errors": ["Not found"]})
             return
         session_id = self.headers.get("X-Session-Id", "")
         if len(session_id) < 33:  # AgentCore wants session ids of 33+ characters
             self._json(HTTPStatus.BAD_REQUEST, {"errors": ["Missing or short X-Session-Id header"]})
+            return
+        if self.path == "/api/recent":
+            self._json(HTTPStatus.OK, self.chatbot.recent(session_id))
             return
         length = int(self.headers.get("Content-Length") or 0)
         try:

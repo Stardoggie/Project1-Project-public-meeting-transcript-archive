@@ -6,71 +6,223 @@
 <title>Meeting Transcript Archive</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #dde1e7;
-    --accent: #2f5bd3; --accent-text: #ffffff; --user: #e8eefc; --error: #b42318; --error-bg: #fef3f2;
+    --bg: #f5f3ee; --panel: #ffffff; --text: #1c2230; --muted: #5f6878; --border: #e1ddd3;
+    --mast: #1d2a44; --mast-text: #f4f1ea; --mast-muted: #b9c1d3; --gold: #c9a24a;
+    --accent: #1f5f8b; --accent-hover: #174a6d; --accent-text: #ffffff; --accent-soft: #e6eef5;
+    --user: #1f5f8b; --user-text: #ffffff;
+    --ok: #1e7a4c; --ok-bg: #e5f4ec; --wait: #8a5a00; --wait-bg: #fbf0d9; --idle: #5f6878; --idle-bg: #eceae4;
+    --error: #b42318; --error-bg: #fef3f2;
+    --shadow: 0 1px 2px rgba(28, 34, 48, .06), 0 4px 14px rgba(28, 34, 48, .06);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #98a2b3; --border: #2e3440;
-      --accent: #6d8ff0; --accent-text: #0d1220; --user: #23304d; --error: #fda29b; --error-bg: #3a1a17;
+      --bg: #11151c; --panel: #1a1f29; --text: #e7e9ee; --muted: #9aa3b2; --border: #2b3240;
+      --mast: #0c1220; --mast-text: #eef0f4; --mast-muted: #8e99ad; --gold: #d8b45e;
+      --accent: #6fa8d6; --accent-hover: #8dbce2; --accent-text: #0b1420; --accent-soft: #1d2c3c;
+      --user: #2b4f6e; --user-text: #eef4fa;
+      --ok: #6fd3a0; --ok-bg: #173226; --wait: #f0c56a; --wait-bg: #352a12; --idle: #a3acba; --idle-bg: #262c37;
+      --error: #fda29b; --error-bg: #3a1a17;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 14px rgba(0, 0, 0, .25);
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .app { max-width: 860px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
-  header { display: flex; align-items: center; gap: 12px; padding: 16px 0 12px; border-bottom: 1px solid var(--border); }
-  header h1 { font-size: 18px; margin: 0; flex: 1; }
-  #agent { color: var(--muted); font-size: 13px; }
-  button { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { width: 100%; max-width: 800px; margin: 0 auto; padding: 0 16px; }
+  .masthead .wrap { max-width: 1240px; }
+
+  /* chat on the left, recent meetings on the right */
+  .layout {
+    flex: 1; min-height: 0; width: 100%; max-width: 1240px; margin: 0 auto;
+    display: grid; grid-template-columns: minmax(0, 1fr) 330px;
+  }
+  .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .sidebar {
+    min-height: 0; overflow-y: auto; border-left: 1px solid var(--border); padding: 20px 16px;
+    background: color-mix(in srgb, var(--panel) 45%, var(--bg));
+  }
+
+  /* masthead */
+  .masthead { background: var(--mast); color: var(--mast-text); border-bottom: 3px solid var(--gold); flex: none; }
+  .masthead .wrap { display: flex; align-items: center; gap: 14px; padding-top: 16px; padding-bottom: 14px; }
+  .seal { width: 40px; height: 40px; flex: none; color: var(--gold); }
+  .titles { flex: 1; min-width: 0; }
+  .masthead h1 { font: 600 22px/1.2 var(--serif); margin: 0; letter-spacing: .2px; }
+  .tagline { color: var(--mast-muted); font-size: 13px; margin-top: 2px; }
+  #agent { color: var(--mast-muted); font-size: 12px; }
+  .masthead button { background: transparent; color: var(--mast-text); border-color: rgba(255, 255, 255, .28); }
+  .masthead button:hover:not(:disabled) { background: rgba(255, 255, 255, .08); }
+
+  button {
+    font: inherit; font-size: 14px; border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    border-radius: 8px; padding: 7px 14px; cursor: pointer; transition: background .15s, border-color .15s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
   button:disabled { opacity: .55; cursor: default; }
-  #log { flex: 1; overflow-y: auto; padding: 16px 0; display: flex; flex-direction: column; gap: 12px; }
-  .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .msg.user { align-self: flex-end; background: var(--user); }
-  .msg.agent { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* conversation */
+  #log { flex: 1; overflow-y: auto; }
+  #log .wrap { padding-top: 20px; padding-bottom: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .section-title {
+    font: 600 13px/1 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+    margin: 4px 0 10px; display: flex; align-items: center; gap: 10px;
+  }
+  .section-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .intro { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+  .intro p { margin: 0 0 4px; color: var(--muted); }
+
+  /* recent meetings */
+  .recent-list { display: flex; flex-direction: column; gap: 12px; }
+  .meeting {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 14px; display: flex; gap: 14px; min-width: 0;
+  }
+  .date {
+    flex: none; width: 56px; text-align: center; border-radius: 8px; overflow: hidden; align-self: flex-start;
+    border: 1px solid var(--border); background: var(--bg);
+  }
+  .date .mon { display: block; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 3px 0; }
+  .date .day { display: block; font: 600 22px/1.15 var(--serif); padding-top: 4px; }
+  .date .yr { display: block; font-size: 11px; color: var(--muted); padding-bottom: 4px; }
+  .meeting .info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .meeting .who { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .meeting h3 { font: 600 17px/1.25 var(--serif); margin: 0; overflow-wrap: anywhere; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--text); }
+  .status { font-weight: 600; text-transform: capitalize; }
+  .status.archived { background: var(--ok-bg); color: var(--ok); }
+  .status.recorded, .status.transcribing { background: var(--wait-bg); color: var(--wait); }
+  .status.scheduled { background: var(--idle-bg); color: var(--idle); }
+  .meeting .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 4px; }
+  .meeting .actions button { font-size: 13px; padding: 4px 10px; }
+  .skeleton { min-height: 132px; position: relative; overflow: hidden; }
+  .skeleton::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, var(--accent-soft), transparent); animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .quiet { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .suggestions button { border-radius: 999px; font-size: 13.5px; padding: 5px 13px; }
+
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--user); color: var(--user-text); border-bottom-right-radius: 4px; }
+  .msg.agent {
+    align-self: flex-start; background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow);
+    border-bottom-left-radius: 4px;
+  }
+  .msg .h { display: block; font-family: var(--serif); font-size: 16px; }
   .msg code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .typing { display: flex; gap: 5px; align-items: center; padding: 14px 16px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
   .note { align-self: center; color: var(--muted); font-size: 13px; }
   .error { align-self: stretch; color: var(--error); background: var(--error-bg); border-radius: 8px; padding: 8px 12px; }
-  .card { align-self: stretch; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .card {
+    align-self: stretch; background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--gold);
+    border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .card strong { font-family: var(--serif); font-size: 16px; }
   .card .actions { display: flex; gap: 8px; margin-top: 10px; }
-  .card pre { white-space: pre-wrap; max-height: 320px; overflow-y: auto; margin: 10px 0 0; font: 14px/1.5 system-ui, sans-serif; }
-  .welcome { color: var(--muted); }
-  footer { border-top: 1px solid var(--border); padding: 12px 0 16px; display: flex; flex-direction: column; gap: 10px; }
+  .card pre { white-space: pre-wrap; max-height: 360px; overflow-y: auto; margin: 10px 0 0; font: 14px/1.6 var(--serif); }
+
+  /* composer */
+  footer { flex: none; border-top: 1px solid var(--border); background: var(--panel); }
+  footer .wrap { padding-top: 12px; padding-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
   .row { display: flex; gap: 8px; align-items: flex-end; }
-  textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-  textarea { flex: 1; resize: none; min-height: 42px; max-height: 160px; }
-  #busy { color: var(--muted); font-size: 13px; min-height: 18px; }
+  textarea {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 12px; flex: 1; resize: none; min-height: 44px; max-height: 160px;
+  }
+  .row button { min-height: 44px; padding: 0 18px; }
+  #busy { color: var(--muted); font-size: 12.5px; min-height: 16px; }
   [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { .skeleton::after, .typing span { animation: none; } }
+  /* narrow screens: the recent meetings become a strip above the chat that scrolls sideways */
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .sidebar { order: -1; border-left: 0; border-bottom: 1px solid var(--border); padding: 12px 16px; overflow: visible; }
+    .recent-list { flex-direction: row; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
+    .recent-list .meeting { flex: 0 0 min(280px, 85%); scroll-snap-align: start; }
+    .sidebar .skeleton { min-height: 110px; }
+  }
+  @media (max-width: 560px) {
+    .tagline, #agent { display: none; }
+    .masthead h1 { font-size: 18px; }
+    .msg { max-width: 92%; }
+  }
 </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1>Meeting Transcript Archive</h1>
+<header class="masthead">
+  <div class="wrap">
+    <svg class="seal" viewBox="0 0 40 40" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M5 15 L20 6 L35 15 Z" stroke-linejoin="round"/>
+      <path d="M9 18v12M16 18v12M24 18v12M31 18v12" stroke-linecap="round"/>
+      <path d="M5 33h30" stroke-linecap="round"/>
+    </svg>
+    <div class="titles">
+      <h1>Meeting Transcript Archive</h1>
+      <div class="tagline">What your councils, boards and commissions said, on the record.</div>
+    </div>
     <span id="agent"></span>
     <button id="new" type="button">New conversation</button>
-  </header>
+  </div>
+</header>
 
-  <main id="log" aria-live="polite">
-    <div class="welcome">
-      Ask about the archive's public meetings and what was said in them, e.g. “What did the city council say about
-      parking this year?” or “Which meetings mentioned Main Street?” Answers name the meeting they come from.
-    </div>
-  </main>
+<div class="layout">
+<div class="chat">
+<main id="log" aria-live="polite">
+  <div class="wrap" id="thread">
+    <section class="intro">
+      <h2 class="section-title">Ask the archive</h2>
+      <p>Ask about any meeting and what was said in it. Every answer names the meeting it comes from.</p>
+      <div class="suggestions">
+        <button type="button">What were the most discussed topics this year?</button>
+        <button type="button">Which meetings mentioned parking?</button>
+        <button type="button">Which governing bodies are in the archive?</button>
+      </div>
+    </section>
+  </div>
+</main>
 
-  <footer id="composer">
-    <div id="busy"></div>
+<footer id="composer">
+  <div class="wrap">
     <form class="row" id="chat-form">
-      <textarea id="prompt" rows="1" placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <textarea id="prompt" rows="1" aria-label="Your question"
+                placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"></textarea>
       <button class="primary" id="send" type="submit">Send</button>
     </form>
-  </footer>
+    <div id="busy"></div>
+  </div>
+</footer>
+</div>
+
+<aside class="sidebar" aria-labelledby="recent-title">
+  <h2 class="section-title" id="recent-title">Recent meetings</h2>
+  <div id="recent" class="recent-list" aria-busy="true">
+    <div class="meeting skeleton"></div><div class="meeting skeleton"></div><div class="meeting skeleton"></div>
+  </div>
+</aside>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const log = $("log");
+const thread = $("thread");
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 let sessionId = newSession();
+let busy = false;
 
 function newSession() {
   return "web-" + crypto.randomUUID().replaceAll("-", "");  // AgentCore wants 33+ characters
@@ -80,45 +232,45 @@ function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-/** Just enough markdown for the chatbot's replies: bold and inline code. */
+/** Just enough markdown for the chatbot's replies: headings, bullets, bold and inline code. */
 function format(text) {
   return escapeHtml(text)
+    .replace(/^#{1,4} (.+)$/gm, '<span class="h">$1</span>')
+    .replace(/^(\s*)[-*] /gm, "$1• ")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
-function add(el) {
-  log.appendChild(el);
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function add(node) {
+  thread.appendChild(node);
   log.scrollTop = log.scrollHeight;
-  return el;
+  return node;
 }
 
 function message(kind, text) {
-  const el = document.createElement("div");
-  el.className = "msg " + kind;
-  el.innerHTML = format(text);
-  return add(el);
+  const node = el("div", "msg " + kind);
+  node.innerHTML = format(text);
+  return add(node);
 }
 
 function note(text, cls = "note") {
-  const el = document.createElement("div");
-  el.className = cls;
-  el.textContent = text;
-  return add(el);
+  return add(el("div", cls, text));
 }
 
 function transcriptCard(t) {
-  const card = document.createElement("div");
-  card.className = "card";
-  const title = document.createElement("strong");
-  title.textContent = `Full transcript: ${t.title} (${t.meeting_date})`;
-  const pre = document.createElement("pre");
-  pre.textContent = t.transcript;
-  const actions = document.createElement("div");
-  actions.className = "actions";
-  const download = document.createElement("button");
+  const card = el("div", "card");
+  const title = el("strong", "", `Full transcript: ${t.title} (${t.meeting_date})`);
+  const pre = el("pre", "", t.transcript);
+  const actions = el("div", "actions");
+  const download = el("button", "", "Download .txt");
   download.type = "button";
-  download.textContent = "Download .txt";
   download.onclick = () => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([t.transcript], { type: "text/plain" }));
@@ -131,10 +283,21 @@ function transcriptCard(t) {
   add(card);
 }
 
+let typing = null;
 function setBusy(text) {
+  busy = Boolean(text);
   $("busy").textContent = text || "";
-  for (const id of ["send", "prompt", "new"]) $(id).disabled = Boolean(text);
-  if (!text) $("prompt").focus();
+  for (const id of ["send", "prompt", "new"]) $(id).disabled = busy;
+  document.querySelectorAll(".intro button, #recent button").forEach((b) => (b.disabled = busy));
+  if (busy) {
+    typing = add(el("div", "msg agent typing"));
+    typing.setAttribute("aria-label", "The assistant is looking through the archive");
+    typing.append(el("span"), el("span"), el("span"));
+  } else {
+    typing?.remove();
+    typing = null;
+    $("prompt").focus();
+  }
 }
 
 // ----- Hosted or local: /config.json exists on CloudFront, not on the local server.py -----
@@ -172,15 +335,85 @@ async function send(prompt) {
   for (const error of result.errors || []) note(error, "error");
 }
 
+async function ask(text) {
+  if (busy || !text.trim()) return;
+  message("user", text);
+  await send(text);
+}
+
+// ----- Recent meetings -----
+
+function dateBadge(isoDate) {
+  const [year, month, day] = isoDate.split("-");  // read as written: new Date() would shift it by the time zone
+  const badge = el("div", "date");
+  badge.setAttribute("aria-label", isoDate);
+  badge.append(el("span", "mon", MONTHS[Number(month) - 1] || month), el("span", "day", String(Number(day))),
+               el("span", "yr", year));
+  return badge;
+}
+
+function actionButton(label, question) {
+  const button = el("button", "", label);
+  button.type = "button";
+  button.onclick = () => ask(question);
+  return button;
+}
+
+function meetingCard(m) {
+  const card = el("article", "meeting");
+  const info = el("div", "info");
+  const tags = el("div", "tags");
+  tags.append(el("span", `tag status ${m.status}`, m.status));
+  for (const phrase of (m.key_phrases || []).slice(0, 3)) tags.append(el("span", "tag", phrase));
+  const where = `"${m.title}" (${m.governing_body}, ${m.meeting_date})`;
+  const actions = el("div", "actions");
+  actions.append(actionButton("Summarize", `Summarize the meeting ${where}.`));
+  if (m.transcript_available) actions.append(actionButton("Full transcript", `Show me the full transcript of ${where}.`));
+  info.append(el("div", "who", m.governing_body), el("h3", "", m.title), tags, actions);
+  card.append(dateBadge(m.meeting_date), info);
+  return card;
+}
+
+async function loadRecent() {
+  const grid = $("recent");
+  const result = await post("/api/recent", "");
+  grid.replaceChildren();
+  grid.setAttribute("aria-busy", "false");
+  const meetings = result.meetings || [];
+  if (meetings.length) meetings.forEach((m) => grid.append(meetingCard(m)));
+  else if ((result.errors || []).length) {
+    grid.append(el("p", "quiet", "The recent meetings couldn't be loaded: " + result.errors.join(" ")));
+    const retry = el("button", "", "Try again");
+    retry.type = "button";
+    retry.onclick = () => {
+      grid.replaceChildren(...[1, 2, 3].map(() => el("div", "meeting skeleton")));
+      loadRecent();
+    };
+    grid.append(retry);
+  }
+  else grid.append(el("p", "quiet", "No meetings in the archive yet."));
+  if (busy) grid.querySelectorAll("button").forEach((b) => (b.disabled = true));
+}
+
+// ----- Wiring -----
+
+document.querySelectorAll(".suggestions button").forEach((b) => (b.onclick = () => ask(b.textContent)));
+
 $("chat-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = $("prompt").value.trim();
   if (!text) return;
   $("prompt").value = "";
-  message("user", text);
-  await send(text);
+  autosize();
+  await ask(text);
 });
 
+function autosize() {
+  const box = $("prompt");
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight + 2, 160) + "px";
+}
+$("prompt").addEventListener("input", autosize);
 $("prompt").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -190,7 +423,7 @@ $("prompt").addEventListener("keydown", (event) => {
 
 $("new").addEventListener("click", () => {
   sessionId = newSession();
-  log.querySelectorAll(":scope > :not(.welcome)").forEach((el) => el.remove());
+  thread.querySelectorAll(":scope > :not(.intro)").forEach((node) => node.remove());
   note("Started a new conversation.");
 });
 
@@ -199,6 +432,7 @@ async function init() {
     const response = await fetch("/config.json", { cache: "no-store" });
     if (response.ok) config = await response.json();
   } catch {}
+  loadRecent();
   try {
     const response = await fetch("/api/status", { headers: await apiHeaders("") });
     const status = await response.json();
