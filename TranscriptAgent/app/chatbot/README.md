@@ -23,7 +23,9 @@ visitor's question and every answer:
 - prompt attacks (attempts to override the chatbot's instructions) in questions
 - hate, insults, sexual content, violence and misconduct: strictly in questions, at medium strength in answers,
   since answers can quote meetings that discuss crime
-- off-limits topics: voting advice and political opinions, and legal advice about someone's own situation
+- off-limits topics in questions: voting advice and political opinions, and legal advice about someone's own
+  situation. Answers aren't checked for these topics: a summary of a meeting that discusses a court case or an
+  election would look like legal or voting advice to the topic filter, and be blocked
 - sensitive numbers in answers (Social Security, tax, passport, driver's licence, card, bank, PIN and phone numbers)
   are replaced with a placeholder. People's names stay, since answers must say who said what.
 

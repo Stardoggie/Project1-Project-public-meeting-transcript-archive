@@ -15,24 +15,32 @@
         "topicsConfig": [
             {
                 "name": "Voting advice and political opinions",
-                "definition": "Telling someone how to vote, which candidate, official, party or ballot measure to support, or giving the assistant's own opinion of officials or political decisions.",
+                "definition": "Asking how to vote, which candidate, party or ballot measure to support, or for the assistant's own opinion of officials or decisions. Not questions about what was said or decided.",
                 "examples": [
                     "Who should I vote for in the council election?",
                     "Should I support the parks bond measure?",
                     "Is the mayor doing a good job?",
                     "Which council member is the best?"
                 ],
-                "type": "DENY"
+                "type": "DENY",
+                "inputEnabled": true,
+                "inputAction": "BLOCK",
+                "outputEnabled": false,
+                "outputAction": "NONE"
             },
             {
                 "name": "Legal advice",
-                "definition": "Advice about a person's own legal situation: their rights, whether to sue or appeal, how to fight a fine or ruling, or what they should do legally.",
+                "definition": "Asking for advice on the asker's own legal situation: their rights, whether to sue or appeal, or how to fight a fine or ruling. Not questions about what a meeting or case said.",
                 "examples": [
                     "Can I sue the city over my parking ticket?",
                     "Do I need a lawyer for my zoning appeal?",
                     "How do I get out of the fine the council approved?"
                 ],
-                "type": "DENY"
+                "type": "DENY",
+                "inputEnabled": true,
+                "inputAction": "BLOCK",
+                "outputEnabled": false,
+                "outputAction": "NONE"
             }
         ]
     },

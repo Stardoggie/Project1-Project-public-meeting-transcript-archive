@@ -232,12 +232,13 @@ function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-/** Just enough markdown for the chatbot's replies: headings, bullets, bold and inline code. */
+/** Just enough markdown for the chatbot's replies: headings, bullets, bold, italics and inline code. */
 function format(text) {
   return escapeHtml(text)
     .replace(/^#{1,4} (.+)$/gm, '<span class="h">$1</span>')
     .replace(/^(\s*)[-*] /gm, "$1• ")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*\w])\*(?![\s*])([^*\n]+?)\*(?![*\w])/g, "$1<em>$2</em>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
@@ -364,7 +365,6 @@ function meetingCard(m) {
   const info = el("div", "info");
   const tags = el("div", "tags");
   tags.append(el("span", `tag status ${m.status}`, m.status));
-  for (const phrase of (m.key_phrases || []).slice(0, 3)) tags.append(el("span", "tag", phrase));
   const where = `"${m.title}" (${m.governing_body}, ${m.meeting_date})`;
   const actions = el("div", "actions");
   actions.append(actionButton("Summarize", `Summarize the meeting ${where}.`));
