@@ -38,6 +38,9 @@ def get_engine_url():
 # target_metadata = mymodel.Base.metadata
 config.set_main_option('sqlalchemy.url', get_engine_url())
 target_db = current_app.extensions['migrate'].db
+# load the archive's models so their tables are in the metadata autogenerate compares against
+import meeting_transcript.governing_body.models_db  # noqa: F401
+import meeting_transcript.meetings.models_db  # noqa: F401
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -49,6 +52,14 @@ def get_metadata():
     if hasattr(target_db, 'metadatas'):
         return target_db.metadatas[None]
     return target_db.metadata
+
+
+def include_archive_tables(name, type_, parent_names):
+    """skip the website's Django tables (auth_*, django_*): they share the database, and autogenerate would otherwise
+    offer to drop them. Every other table is compared, so a table whose model was removed can still be dropped"""
+    if type_ == "table":
+        return not name.startswith(("auth_", "django_"))
+    return True
 
 
 def run_migrations_offline():
@@ -65,7 +76,8 @@ def run_migrations_offline():
     """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url, target_metadata=get_metadata(), literal_binds=True
+        url=url, target_metadata=get_metadata(), literal_binds=True,
+        include_name=include_archive_tables
     )
 
     with context.begin_transaction():
@@ -93,6 +105,8 @@ def run_migrations_online():
     conf_args = current_app.extensions['migrate'].configure_args
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
+    if conf_args.get("include_name") is None:
+        conf_args["include_name"] = include_archive_tables
 
     connectable = get_engine()
 

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Meeting Transcript Archive</h1>
+<p>What your councils, boards and commissions said, on the record.</p>
+{% if user.is_authenticated %}
+  <p><a href="{% url 'chat' %}">Ask the archive's assistant</a></p>
+  {% if user.is_staff %}<p><a href="{% url 'admin:index' %}">Clerks' admin</a></p>{% endif %}
+  <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
+{% else %}
+  <p><a href="{% url 'login' %}">Sign in</a> to ask the archive's assistant, or to manage the archive if you're a
+  clerk. Accounts are made by the archive's clerks.</p>
+{% endif %}
+<p>Anyone can read the archive through its <a href="/api/v1/">read-only API</a>, no sign-in needed: governing
+bodies, meetings, transcripts and a transcript search.</p>
+{% endblock %}

@@ -1,6 +1,6 @@
 # Archive chatbot
 
-The public, read-only assistant behind the archive's website. It answers questions about governing bodies, meetings
+The read-only assistant on the archive's website, for signed-in viewers. It answers questions about governing bodies, meetings
 and what was said in them, and names the meeting (title, governing body, date) behind every answer. It can't add,
 change or delete anything; that's the clerks' agent's job (`../agent`, used from the terminal chat).
 
@@ -57,8 +57,8 @@ calls and results, and `{"type": "transcript", ...}` for a full transcript.
 
 `{"recent_meetings": n}` on its own (n from 1 to 10) answers with one `{"type": "recent_meetings", "meetings": [...]}`
 event: the n latest meetings dated today or earlier, newest first, with their governing body, status, whether a
-transcript exists and a few key phrases. It reads the archive directly, without the model; the website's front page
-uses it.
+transcript exists and a few key phrases. It reads the archive directly, without the model; the website's chatbot page
+uses it for its recent meetings.
 
 ## Environment variables
 | Variable | Required | Description |
@@ -71,8 +71,9 @@ uses it.
 | `GUARDRAIL_VERSION` | Deployed: yes | A published version number of the guardrail, never `DRAFT` |
 
 ## Run and test locally
-`agentcore dev --agent chatbot --port 8090` in `TranscriptAgent/` runs it, and `python server.py` in
-`TranscriptAgent/web/` serves the page that talks to it.
+`agentcore dev --agent chatbot --port 8090` in `TranscriptAgent/` runs it, and the website
+(`TranscriptAgent/website`, `DJANGO_DEBUG=1 uv run python manage.py runserver`) serves the page that talks to it, for
+signed-in viewers.
 
 Conversations are kept in the chatbot's own process memory, never in AgentCore Memory (that's where the clerks'
 conversations are).

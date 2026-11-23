@@ -56,6 +56,7 @@
   #agent { color: var(--mast-muted); font-size: 12px; }
   .masthead button { background: transparent; color: var(--mast-text); border-color: rgba(255, 255, 255, .28); }
   .masthead button:hover:not(:disabled) { background: rgba(255, 255, 255, .08); }
+  .signout { margin: 0; }
 
   button {
     font: inherit; font-size: 14px; border: 1px solid var(--border); background: var(--panel); color: var(--text);
@@ -175,8 +176,12 @@
       <h1>Meeting Transcript Archive</h1>
       <div class="tagline">What your councils, boards and commissions said, on the record.</div>
     </div>
-    <span id="agent"></span>
+    <span id="agent">{{ agent }}</span>
     <button id="new" type="button">New conversation</button>
+    <form method="post" action="{% url 'logout' %}" class="signout">
+      {% csrf_token %}
+      <button type="submit">Sign out {{ user.get_username }}</button>
+    </form>
   </div>
 </header>
 
@@ -301,33 +306,24 @@ function setBusy(text) {
   }
 }
 
-// ----- Hosted or local: /config.json exists on CloudFront, not on the local server.py -----
-let config = null;  // { hosted: true } when hosted
-
-async function sha256Hex(data) {
-  const buffer = typeof data === "string" ? new TextEncoder().encode(data) : data;
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", buffer))].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** Headers for an /api call: the hosted API needs the body's SHA-256, because CloudFront signs the request with it. */
-async function apiHeaders(body) {
-  if (!config) return {};
-  return { "x-amz-content-sha256": await sha256Hex(body ?? "") };
-}
+// ----- Calls to the website: Django checks the CSRF token and that you're signed in -----
+const CSRF_TOKEN = "{{ csrf_token }}";
 
 async function post(path, body, headers = {}) {
   try {
-    const signing = await apiHeaders(body);
-    const response = await fetch(path, { method: "POST", body, headers: { "X-Session-Id": sessionId, ...signing, ...headers } });
+    const response = await fetch(path, {
+      method: "POST", body, headers: { "X-Session-Id": sessionId, "X-CSRFToken": CSRF_TOKEN, ...headers }
+    });
+    if (response.status === 401) location.reload();  // signed out meanwhile: the reload goes to the sign-in page
     return JSON.parse(await response.text());
   } catch (e) {
-    return { errors: [`Can't reach the server (${e.message}).` + (config ? "" : " Is server.py running?")] };
+    return { errors: [`Can't reach the server (${e.message}).`] };
   }
 }
 
 async function send(prompt) {
   setBusy("Looking through the archive…");
-  const result = await post("/api/chat", JSON.stringify({ prompt }), { "Content-Type": "application/json" });
+  const result = await post("{% url 'chat_ask' %}", JSON.stringify({ prompt }), { "Content-Type": "application/json" });
   setBusy("");
   for (const item of result.items || []) {
     if (item.kind === "reply") message("agent", item.text);
@@ -376,7 +372,7 @@ function meetingCard(m) {
 
 async function loadRecent() {
   const grid = $("recent");
-  const result = await post("/api/recent", "");
+  const result = await post("{% url 'chat_recent' %}", "");
   grid.replaceChildren();
   grid.setAttribute("aria-busy", "false");
   const meetings = result.meetings || [];
@@ -427,17 +423,8 @@ $("new").addEventListener("click", () => {
   note("Started a new conversation.");
 });
 
-async function init() {
-  try {
-    const response = await fetch("/config.json", { cache: "no-store" });
-    if (response.ok) config = await response.json();
-  } catch {}
+function init() {
   loadRecent();
-  try {
-    const response = await fetch("/api/status", { headers: await apiHeaders("") });
-    const status = await response.json();
-    $("agent").textContent = config ? "" : status.agent;
-  } catch {}
   $("prompt").focus();
 }
 init();

@@ -3,15 +3,17 @@ An archive of public meeting transcripts with two AI agents, both LangGraph grap
 - **The admin agent** (`agent`), for archive staff, used from the terminal chat. It manages governing bodies and
   meetings, takes recordings, transcribes them with Amazon Transcribe, and finds people, places and topics with
   Amazon Comprehend.
-- **The chatbot** (`chatbot`), for the public, behind the website. It answers questions about the meetings and what
-  was said in them, naming the meeting behind each answer. It only reads: it logs into the database as a user that
-  can't change anything.
+- **The chatbot** (`chatbot`), for signed-in viewers on the website. It answers questions about the meetings and
+  what was said in them, naming the meeting behind each answer. It only reads.
+
+The website (`TranscriptAgent/website`, Django) has the clerks' admin for managing the archive and its recordings, the
+chatbot page for viewers, and a read-only REST API that anyone can use without signing in.
 
 ## Layout
-- `public_meeting_transcript_archive/meeting_transcript/`: the archive's storage and AWS logic (SQLAlchemy models, store and service functions, migrations). There is no REST API; the agent calls these functions directly.
+- `public_meeting_transcript_archive/meeting_transcript/`: the archive's storage and AWS logic (SQLAlchemy models, store and service functions, migrations). The archive itself has no HTTP routes; the agents' tools and the website (whose read-only REST API is at `/api/v1/`) call these functions directly.
 - `TranscriptAgent/`: the AgentCore 1.0 project. The admin agent's code is in `TranscriptAgent/app/agent/`, the
   chatbot's in `TranscriptAgent/app/chatbot/`, the terminal chat in `TranscriptAgent/cli/` and the website in
-  `TranscriptAgent/web/` (each has a README).
+  `TranscriptAgent/website/` (each has a README).
 
 ## Install
 ### Requirements
@@ -74,22 +76,28 @@ Other clients can send prompts to `POST http://localhost:8080/invocations` with 
 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: <any id>` (reuse it to continue a conversation; a request without it
 starts a new conversation of its own).
 
-To try the website, start the chatbot as well (port 8090 keeps it out of the terminal chat's way) and the local web
-server (see `TranscriptAgent/web/README.md`):
+To try the website, start the chatbot as well (port 8090 keeps it out of the terminal chat's way):
 ```
 cd TranscriptAgent
 agentcore dev --agent chatbot --port 8090
-cd web
-python server.py        then open http://127.0.0.1:8501
 ```
+then the website from another terminal (the first time, see `TranscriptAgent/website/README.md` for setting up its
+accounts):
+```
+cd TranscriptAgent/website
+DJANGO_DEBUG=1 uv run python manage.py runserver
+```
+and open http://127.0.0.1:8000.
 
 ## Deploy
 `agentcore deploy` in `TranscriptAgent/` deploys both agents to AgentCore Runtime (account and region in
-`agentcore/aws-targets.json`): `agent` for clerks and `chatbot` for the web page. Their settings are in
+`agentcore/aws-targets.json`): `agent` for clerks and `chatbot` for the website's viewers. Their settings are in
 `TranscriptAgent/agentcore/agentcore.json` (see the agent README), and they use the existing `TranscriptionDBSecret`
 secret, `lg-transcription-db` database and `lg-transcription-bucket` bucket. The CDK stack
-(`TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts`) only adds the website on CloudFront, which talks only to the
-chatbot (see `TranscriptAgent/web/README.md`); its address is the stack's `SiteUrl` output.
+(`TranscriptAgent/agentcore/cdk/lib/cdk-stack.ts`) only adds the website: Django in a Lambda behind CloudFront, using
+the same database, bucket and `meeting-transcript-archive` policy. Its address is the stack's `SiteUrl` output. It needs
+its own secret, `TranscriptArchiveWebSecret`, made before the first deploy, and a CORS rule on the bucket afterwards
+(see `TranscriptAgent/website/README.md`).
 
 Each runtime gets its own IAM managed policy:
 - `agent`: `meeting-transcript-archive` (copy in `iam/policy.json`): S3, Transcribe, Comprehend and the secret.
@@ -123,8 +131,9 @@ Logs: `agentcore logs runtime --name agent --since 15m`.
 - Archive logic: `pytest meeting_transcript/tests` in `public_meeting_transcript_archive/`
 - Agent graph: `uv run pytest tests` in `TranscriptAgent/app/agent/` (pytest is in its `dev` dependency group, which `uv sync` installs)
 - Chatbot: `uv run pytest tests` in `TranscriptAgent/app/chatbot/`
+- Website: `uv run pytest` in `TranscriptAgent/website/`
 
-All three need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
+All four need the settings above, use `DATABASE_TEST_URL`, and refuse to run against the `DATABASE_URL` database.
 
 ## Technology
 - Python (3.14 in the AgentCore runtime)

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Meeting Transcript Archive{% endblock %}</title>
+<style>
+  :root { --bg: #f5f3ee; --panel: #ffffff; --text: #1c2230; --muted: #5f6878; --border: #e1ddd3; --accent: #1f5f8b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11151c; --panel: #1a1f29; --text: #e7e9ee; --muted: #9aa3b2; --border: #2b3240; --accent: #6fa8d6; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 560px; margin: 48px auto; padding: 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+  h1 { font-size: 24px; margin-top: 0; }
+  a { color: var(--accent); }
+  .quiet { color: var(--muted); font-size: 14px; }
+  label { display: block; margin: 12px 0 4px; }
+  input[type=text], input[type=password] { width: 100%; padding: 8px; box-sizing: border-box; }
+  button { margin-top: 16px; padding: 8px 16px; }
+  .error { color: #b42318; }
+</style>
+</head>
+<body>
+<main>
+<div class="panel">
+{% block content %}{% endblock %}
+</div>
+</main>
+</body>
+</html>
