@@ -34,7 +34,22 @@ viewer accounts; only a superuser can make clerks.
 | `GET /api/v1/search?q=<text>&body_id=<id>` | Meetings whose transcript contains the text, with short excerpts |
 
 ## Run it locally
-It uses the repo's `.env`. Point `DATABASE_URL` at a local Postgres with the archive's tables
+The quick way, in this folder:
+```
+./run-local.sh
+```
+It starts the local docker Postgres, brings the archive's tables, Django's tables and the Clerks and Viewers groups up to
+date, starts the chatbot on port 8090 (its output goes to `chatbot.log`) and runs the website on
+http://127.0.0.1:8000. It always uses the local database, never RDS or its secret. Ctrl+C stops the website and the
+chatbot together. If something is already on 8090 it uses that chatbot; other ports:
+`WEBSITE_PORT=8100 CHATBOT_PORT=8190 ./run-local.sh`.
+
+Make your own sign-in once (it asks for a password):
+```
+DATABASE_URL=postgresql+psycopg://postgres:root@localhost:5432/transcript_archive DJANGO_DEBUG=1 uv run python manage.py createsuperuser
+```
+
+Step by step instead: it uses the repo's `.env`. Point `DATABASE_URL` at a local Postgres with the archive's tables
 (`flask --app meeting_transcript.app db upgrade` in `public_meeting_transcript_archive/`), then in this folder:
 ```
 uv sync
