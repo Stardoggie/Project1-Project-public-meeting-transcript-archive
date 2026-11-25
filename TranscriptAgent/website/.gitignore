@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+# made by `manage.py collectstatic`; the deploy collects them into the Lambda's bundle instead
+staticfiles/
+# the chatbot's output while run-local.sh runs
+chatbot.log

@@ -2,7 +2,7 @@
 import functools
 import logging
 import re
-import uuid
+import uuid  # new upload names come from uuid4 (in the archive's uploads module); the tests fix them through here
 from typing import Annotated, Any
 from langchain_core.tools import tool as _lc_tool
 from pydantic import BaseModel, WithJsonSchema
@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from meeting_transcript.app import create_app
 from meeting_transcript.aws.aws import get_s3_client
-from meeting_transcript.config import BUCKET_NAME
 from meeting_transcript.extensions import db
 from meeting_transcript.governing_body import store as bodies
 from meeting_transcript.governing_body.models_db import GoverningBody
@@ -19,16 +18,8 @@ from meeting_transcript.meetings.models_db import Meeting
 from meeting_transcript.analysis import store as analysis
 from meeting_transcript.transcription import store as transcripts
 from meeting_transcript.transcription import service as transcription
+from meeting_transcript.transcription import uploads
 MAX_TRANSCRIPT_CHARS = 40_000
-UPLOAD_URL_SECONDS = 3600
-# Uploads land in uploads/ first; an S3 lifecycle rule deletes anything left there after a day, so files that are
-# never attached (cancelled, rejected, abandoned) don't pile up. Attached recordings are moved into audio/.
-UPLOAD_PREFIX = "uploads/"
-AUDIO_PREFIX = "audio/"
-# The only key shape request_audio_upload hands out
-AUDIO_KEY_PATTERN = re.compile(r"uploads/meeting-transcription-[0-9a-f]{32}\.(mp3|wav)")
-# The content type S3 requires for each format; the upload form is signed with it, so nothing else is accepted
-AUDIO_CONTENT_TYPES = {"mp3": "audio/mpeg", "wav": "audio/wav"}
 # Postgres's code for a foreign key violation: a missing referenced row, or a delete of a row still referenced
 FOREIGN_KEY_VIOLATION = "23503"
 # Ids are Postgres integers, so a bigger one can't name a row
@@ -337,21 +328,7 @@ def request_audio_upload(filename: str) -> dict:
     When deployed, the URL is signed with the runtime's temporary credentials and may expire before
     the hour is up; if an upload is rejected as expired, request a new URL.
     """
-    extension = filename.rsplit(".", 1)[-1].lower()
-    if extension not in transcription.ALLOWED_AUDIO_EXTENSIONS:
-        return {"error": "unsupported_media_type", "detail": "Only MP3 and WAV are accepted."}
-    audio_key = f"{UPLOAD_PREFIX}meeting-transcription-{uuid.uuid4().hex}.{extension}"
-    content_type = AUDIO_CONTENT_TYPES[extension]
-    # A signed upload form rather than a plain link: S3 itself refuses a file over the size limit, an empty one, or one
-    # that isn't this audio type, before storing anything
-    upload = get_s3_client().generate_presigned_post(
-        Bucket=BUCKET_NAME,
-        Key=audio_key,
-        Fields={"Content-Type": content_type},
-        Conditions=[{"Content-Type": content_type}, ["content-length-range", 1, transcription.MAX_AUDIO_BYTES]],
-        ExpiresIn=UPLOAD_URL_SECONDS
-    )
-    return {"upload_url": upload["url"], "upload_fields": upload["fields"], "audio_key": audio_key, "method": "POST"}
+    return uploads.request_upload(get_s3_client(), filename)
 
 
 @tool
@@ -361,48 +338,15 @@ def attach_uploaded_audio(body_id: int, meeting_id: int, audio_key: str) -> dict
     This replaces any earlier recording and clears that meeting's transcript, entities and key phrases.
     If the meeting already has a transcript, the app asks the user to confirm before this runs.
     """
-    if not AUDIO_KEY_PATTERN.fullmatch(audio_key):
-        return {"error": "invalid_audio_key", "detail": "Use the audio_key returned by request_audio_upload."}
-    s3 = get_s3_client()
-    try:
-        size = s3.head_object(Bucket=BUCKET_NAME, Key=audio_key)["ContentLength"]
-    except Exception:
-        return {"error": "upload_not_found", "detail": "The file has not been uploaded yet."}
-    if size == 0 or size > transcription.MAX_AUDIO_BYTES:
-        _delete_from_s3(s3, audio_key)  # it can never be used, so don't keep it
-        return {"error": "invalid_size", "detail": f"File is {size} bytes; must be 1 byte to 500 MB."}
-    # Keep the recording for good in audio/; anything still in uploads/ is deleted by the lifecycle rule
-    stored_key = _new_audio_key(audio_key)
-    try:
-        s3.copy_object(Bucket=BUCKET_NAME, Key=stored_key, CopySource={"Bucket": BUCKET_NAME, "Key": audio_key})
-    except Exception:
-        log.exception("Couldn't move %s into %s", audio_key, AUDIO_PREFIX)
-        return {"error": "upload_not_stored", "detail": "The upload couldn't be moved into storage; try attaching it again."}
-    result = _run(transcripts.attach_audio, stored_key, meeting_id=meeting_id, body_id=body_id)
-    attached = isinstance(result, dict) and "error" not in result and result != {"out": "out_of_bounds"}
-    if not attached:
-        # Nothing was attached: drop the stored copy but keep the upload, so attaching again still works
-        _delete_from_s3(s3, stored_key)
-        if result == {"out": "out_of_bounds"}:
-            return {"error": "wrong_governing_body", "detail": "Meeting is not in that governing body."}
-        return _not_found(result, "meeting")
-    _delete_from_s3(s3, audio_key)
-    return result
+    # The upload code is shared with the website's admin; only the database step runs in this module's app context
+    def attach(stored_key):
+        return _run(transcripts.attach_audio, stored_key, meeting_id=meeting_id, body_id=body_id)
+
+    return uploads.attach_upload(get_s3_client(), audio_key, attach)
 
 
-def _new_audio_key(upload_key: str) -> str:
-    """A new name in audio/ for each attach, so two attaches of one upload never share (or delete) the same copy.
-    It keeps the upload's .mp3 or .wav, since Transcribe reads the format from it."""
-    extension = upload_key.rsplit(".", 1)[-1]
-    return f"{AUDIO_PREFIX}meeting-transcription-{uuid.uuid4().hex}.{extension}"
-
-
-def _delete_from_s3(s3, key: str):
-    """Delete one object; if that fails it's only logged, since a leftover upload is removed by the lifecycle rule."""
-    try:
-        s3.delete_object(Bucket=BUCKET_NAME, Key=key)
-    except Exception:
-        log.warning("Couldn't delete %s from S3", key, exc_info=True)
+# Kept under the old name for the tests and anything else that imports it from here
+_new_audio_key = uploads.new_audio_key
 
 
 @tool

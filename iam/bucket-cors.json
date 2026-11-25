@@ -1,0 +1,10 @@
+{
+    "CORSRules": [
+        {
+            "AllowedOrigins": ["https://REPLACE-WITH-THE-SITE-URL.cloudfront.net"],
+            "AllowedMethods": ["POST"],
+            "AllowedHeaders": ["*"],
+            "MaxAgeSeconds": 3000
+        }
+    ]
+}

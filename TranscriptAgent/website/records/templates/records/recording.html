@@ -1,0 +1,131 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:records_meeting_changelist' %}">Meetings</a>
+  &rsaquo; <a href="{% url 'admin:records_meeting_change' meeting.pk %}">{{ meeting }}</a>
+  &rsaquo; Recording and transcription
+</div>
+{% endblock %}
+{% block content %}
+<style>
+  .step { margin: 0 0 24px; padding: 12px 16px; border: 1px solid var(--hairline-color); border-radius: 4px; }
+  .step h2 { margin-top: 0; }
+  #upload-status, #transcription-status { margin-top: 8px; white-space: pre-wrap; }
+</style>
+<p>
+  {{ meeting.body.name }}, {{ meeting.meeting_date }}. Status: <strong id="meeting-status">{{ meeting.status }}</strong>.
+  {% if meeting.transcript is not None %}It has a transcript.{% else %}It has no transcript yet.{% endif %}
+</p>
+
+<div class="step">
+  <h2>1. Upload a recording</h2>
+  <p>An MP3 or WAV file, up to 500 MB.{% if meeting.transcript is not None %} Uploading replaces the current
+  recording and clears its transcript, entities and key phrases.{% endif %}</p>
+  <input type="file" id="file" accept=".mp3,.wav,audio/mpeg,audio/wav">
+  <button type="button" class="button" id="upload">Upload</button>
+  <div id="upload-status"></div>
+</div>
+
+<div class="step">
+  <h2>2. Transcribe it</h2>
+  <p>Transcription takes a few minutes. This page checks on it every {{ check_every_seconds }} seconds until it's
+  done, then stores the transcript and finds its entities and key phrases.</p>
+  <button type="button" class="button" id="start">Start transcription</button>
+  <button type="button" class="button" id="check">Check now</button>
+  <div id="transcription-status"></div>
+</div>
+
+<p><a href="{% url 'admin:records_meeting_change' meeting.pk %}">Back to the meeting</a></p>
+
+{{ finished|json_script:"finished" }}
+<script>
+const CSRF_TOKEN = "{{ csrf_token }}";
+const BASE = "{% url 'admin:meeting_recording' meeting.pk %}";
+const CHECK_EVERY_MS = {{ check_every_seconds }} * 1000;
+const MAX_BYTES = {{ max_bytes }};
+const FINISHED = JSON.parse(document.getElementById("finished").textContent);
+let checkTimer = null;
+
+function show(id, text) {
+  document.getElementById(id).textContent = text;
+}
+
+/** POST a JSON object to one of this page's own steps; returns the JSON answer, or an error object. */
+async function post(path, body) {
+  try {
+    const response = await fetch(BASE.replace("recording/", path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN },
+      body: JSON.stringify(body || {})
+    });
+    if (response.status === 504) {
+      return { status: "WORKING", detail: "Still working on it; checking again soon." };
+    }
+    return await response.json();
+  } catch {
+    return { error: "network", detail: "The server couldn't be reached. Try again." };
+  }
+}
+
+function describe(result) {
+  if (result.error) return `Error: ${result.detail || result.error}`;
+  if (result.status) return `Transcription ${result.status}${result.detail ? ": " + result.detail : ""}` +
+    (result.failure_reason ? ": " + result.failure_reason : "");
+  return JSON.stringify(result);
+}
+
+document.getElementById("upload").addEventListener("click", async () => {
+  const file = document.getElementById("file").files[0];
+  if (!file) return show("upload-status", "Pick an MP3 or WAV file first.");
+  if (file.size === 0 || file.size > MAX_BYTES) return show("upload-status", "The file must be 1 byte to 500 MB.");
+  show("upload-status", "Getting an upload form…");
+  const form = await post("recording/form/", { filename: file.name });
+  if (form.error) return show("upload-status", describe(form));
+  // The file goes straight to S3; the signed form only accepts this file type and size
+  const data = new FormData();
+  for (const [name, value] of Object.entries(form.upload_fields)) data.append(name, value);
+  data.append("file", file);
+  show("upload-status", `Uploading ${file.name}…`);
+  try {
+    const upload = await fetch(form.upload_url, { method: "POST", body: data });
+    if (!upload.ok) return show("upload-status", `S3 refused the upload (HTTP ${upload.status}).`);
+  } catch {
+    return show("upload-status", "The upload to S3 failed. Check the bucket's CORS rule allows this site.");
+  }
+  let attached = await post("recording/attach/", { audio_key: form.audio_key });
+  if (attached.confirm) {
+    if (!window.confirm(attached.confirm + "\n\nReplace it?")) {
+      return show("upload-status", "Not replaced; the meeting keeps its recording and transcript.");
+    }
+    attached = await post("recording/attach/", { audio_key: form.audio_key, confirm: true });
+  }
+  if (attached.error) return show("upload-status", describe(attached));
+  show("upload-status", "Uploaded and attached. You can start transcription now.");
+  show("meeting-status", "recorded");
+});
+
+async function check() {
+  const result = await post("transcription/check/");
+  show("transcription-status", describe(result));
+  clearTimeout(checkTimer);
+  if (!result.error && !FINISHED.includes(result.status)) {
+    checkTimer = setTimeout(check, CHECK_EVERY_MS);
+  } else if (result.status === "COMPLETED") {
+    show("meeting-status", "archived");
+  }
+}
+
+document.getElementById("start").addEventListener("click", async () => {
+  show("transcription-status", "Starting…");
+  const result = await post("transcription/start/");
+  show("transcription-status", describe(result));
+  if (!result.error) {
+    show("meeting-status", "transcribing");
+    checkTimer = setTimeout(check, CHECK_EVERY_MS);
+  }
+});
+
+document.getElementById("check").addEventListener("click", check);
+</script>
+{% endblock %}
