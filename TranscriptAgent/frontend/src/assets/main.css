@@ -1,0 +1,214 @@
+/* The chatbot page's theme (website/chat/templates/chat/index.html), so the Vue and Django pages feel like one site */
+:root {
+  --bg: #f5f3ee;
+  --panel: #ffffff;
+  --text: #1c2230;
+  --muted: #5f6878;
+  --border: #e1ddd3;
+  --mast: #1d2a44;
+  --mast-text: #f4f1ea;
+  --mast-muted: #b9c1d3;
+  --gold: #c9a24a;
+  --accent: #1f5f8b;
+  --accent-hover: #174a6d;
+  --accent-text: #ffffff;
+  --accent-soft: #e6eef5;
+  --error: #b42318;
+  --error-bg: #fef3f2;
+  --shadow: 0 1px 2px rgba(28, 34, 48, 0.06), 0 4px 14px rgba(28, 34, 48, 0.06);
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151c;
+    --panel: #1a1f29;
+    --text: #e7e9ee;
+    --muted: #9aa3b2;
+    --border: #2b3240;
+    --mast: #0c1220;
+    --mast-text: #eef0f4;
+    --mast-muted: #8e99ad;
+    --gold: #d8b45e;
+    --accent: #6fa8d6;
+    --accent-hover: #8dbce2;
+    --accent-text: #0b1420;
+    --accent-soft: #1d2c3c;
+    --error: #fda29b;
+    --error-bg: #3a1a17;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.25);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.55 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Shared by every page: a centred column with a 16px gutter on phones */
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 28px 16px 64px;
+}
+
+/* The heading at the top of a page, with an optional line under it */
+.intro {
+  margin-bottom: 28px;
+}
+
+.intro h1 {
+  font: 600 clamp(26px, 5vw, 34px) / 1.2 var(--serif);
+  margin: 8px 0 6px;
+}
+
+.intro p {
+  margin: 0;
+}
+
+/* A grid of cards: as many columns as fit, each at least 260px wide */
+.card-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+/* Small capitals with a rule running off to the right, like the chatbot page's "Recent meetings" */
+.section-title {
+  font: 600 13px/1 system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.quiet {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.error {
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+button {
+  font: inherit;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Cards and tags, shared by the body cards and the meeting cards */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.tag {
+  font-size: 11.5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* A shimmering placeholder while something loads */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  min-height: 120px;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--accent-soft), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}

@@ -10,7 +10,8 @@ TAB_ID = "web-0123456789abcdef0123456789abcdef"
 
 def test_visitors_are_sent_to_sign_in(client):
     assert client.get("/").status_code == 200
-    assert client.get("/chat/")["Location"].startswith("/accounts/login/")
+    # the frontend's sign-in page, which comes back to the chatbot afterwards
+    assert client.get("/chat/")["Location"] == "/signin?next=/chat/"
     assert client.get("/admin/")["Location"].startswith("/admin/login/")
     asked = client.post("/chat/ask", json.dumps({"prompt": "hi"}), content_type="application/json",
                         headers={"X-Session-Id": TAB_ID})

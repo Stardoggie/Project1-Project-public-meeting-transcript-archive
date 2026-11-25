@@ -119,7 +119,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"}
 ]
-LOGIN_URL = "/accounts/login/"
+# The Vue frontend's sign-in page: the chatbot page sends anyone not signed in here, with ?next=/chat/.
+# The Django sign-in page (/accounts/login/) still works, for when the site is used without the frontend.
+LOGIN_URL = "/signin"
 LOGIN_REDIRECT_URL = "/chat/"
 LOGOUT_REDIRECT_URL = "/"
 LANGUAGE_CODE = "en-us"
